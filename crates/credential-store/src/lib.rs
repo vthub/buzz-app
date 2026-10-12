@@ -26,7 +26,7 @@ pub const HUMAN_STORE: &str = human_store(cfg!(debug_assertions));
 
 pub const fn human_service(debug: bool) -> &'static str {
     if debug {
-        "xyz.block.buzz.desktop.identity.debug"
+        "xyz.block.buzz.desktop.identity.debug.onboarding" // DO NOT MERGE
     } else {
         "xyz.block.buzz.desktop.identity"
     }
@@ -34,7 +34,7 @@ pub const fn human_service(debug: bool) -> &'static str {
 
 pub const fn human_store(debug: bool) -> &'static str {
     if debug {
-        "dev.local.buzz.foundation.identity.debug"
+        "dev.local.buzz.foundation.identity.debug.onboarding" // DO NOT MERGE
     } else {
         "dev.local.buzz.foundation.identity"
     }
