@@ -14,6 +14,7 @@ import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
+import { builderlabProvider } from "./decisions";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { hostedAgentSettings } from "./service";
@@ -27,6 +28,7 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
+  "decisions",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
@@ -130,6 +132,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
+    ctx.decisions.registerProvider(builderlabProvider(session, loginAvailable));
     ctx.provide("builderlab", hostedAgentSettings(session, agents));
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and

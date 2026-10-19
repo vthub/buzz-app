@@ -1717,6 +1717,7 @@ so send only what the decision needs.
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|
 | `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
+| `block.builderlab/builderlab` | Builderlab (bundled, in builds with a Builderlab) | The user's Builderlab sign-in, which native code sends with each call |
 
 ## In-app keyboard shortcuts
 
