@@ -1663,6 +1663,9 @@ takes 2 to 10 level labels, lowest first. A `yes_no` answer is a probability;
 a `choice` answer is the picked value with its confidence; a `score` answer is
 where it falls on the 0-based scale (it can be fractional), with a confidence.
 Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
+`community` is the Buzz community (its relay URL) the text comes from. A
+provider that bills the community, such as Builderlab, refuses a request
+without one (`invalid_request`); TypeSafe ignores it.
 
 `decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
 no decision provider is on (`unavailable`), the chosen provider has no
@@ -1717,7 +1720,7 @@ so send only what the decision needs.
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|
 | `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
-| `block.builderlab/builderlab` | Builderlab (bundled, in builds with a Builderlab) | The user's Builderlab sign-in, which native code sends with each call |
+| `block.builderlab/builderlab` | Builderlab (bundled, in builds with a Builderlab) | The user's Builderlab sign-in, which native code sends with each call. Builderlab answers with Jev and bills the request's `community`; its server also limits the question count (8 by default) |
 
 ## In-app keyboard shortcuts
 

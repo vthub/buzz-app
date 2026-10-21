@@ -5327,6 +5327,10 @@ it("runs a watch's classifier after its selectors and passes the event with each
   });
   expect(questions.deploy?.instructions).toContain("\nNo means: ");
   expect(questions.deploy?.instructions).toContain("untrusted data");
+  // The agent's community, which a provider such as Builderlab bills.
+  expect(jev.decide.mock.calls[0]?.[0].community).toBe(
+    "wss://relay.example.test",
+  );
 });
 
 it("drops an event every answer rejects, and does not classify an event the selectors reject", async () => {

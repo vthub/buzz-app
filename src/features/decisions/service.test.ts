@@ -226,7 +226,9 @@ it("checks requests before any provider sees them", async () => {
       questions: { rate: { type: "score", instructions: "x", levels: ["a"] } },
     },
     { ...request, questions: { ["x".repeat(65)]: request.questions.urgent } },
-  ] as DecisionRequest[])
+    { ...request, community: " " },
+    { ...request, community: 1 },
+  ] as unknown as DecisionRequest[])
     await expect(service.decide(bad)).resolves.toMatchObject({
       reason: "invalid_request",
     });

@@ -34,6 +34,10 @@ export type DecisionRequest = Readonly<{
   questions: Readonly<Record<string, DecisionQuestion>>;
   /** How long to wait, 1 to 30 seconds. Defaults to 30. */
   timeoutMs?: number;
+  /** The Buzz community (its relay URL) the text comes from. A provider
+   * that bills the community, such as Builderlab, refuses a request
+   * without one. */
+  community?: string;
 }>;
 
 export type DecisionAnswer =
@@ -354,6 +358,8 @@ export function checkRequest(
   request: DecisionRequest,
 ): DecisionFailure | undefined {
   if (!record(request) || !text(request.state) || !record(request.questions))
+    return "invalid_request";
+  if (request.community !== undefined && !text(request.community))
     return "invalid_request";
   const questions = Object.entries(request.questions);
   if (questions.length === 0 || questions.length > MAX_QUESTIONS)

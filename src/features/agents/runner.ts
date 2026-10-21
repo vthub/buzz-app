@@ -1809,7 +1809,10 @@ export class AgentRunners {
           }
         : { classifier, ...input };
     if (!live()) return undefined;
-    const { pass, result } = await classify(decisions, facts);
+    const { pass, result } = await classify(decisions, {
+      ...facts,
+      community: agent.relay,
+    });
     return pass ? result : undefined;
   }
   /** What `event` wakes now, and whether other matching watches still wait

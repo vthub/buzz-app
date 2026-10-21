@@ -45,6 +45,8 @@ export type ClassifierContext = Readonly<{
 }>;
 export type ClassifierInput = Readonly<{
   classifier: NonNullable<EventWatch["classifier"]>;
+  /** The agent's community, which a provider may bill. */
+  community?: string;
 }> &
   (
     | Readonly<{ source: { provider: string; text: string } }>
@@ -93,6 +95,7 @@ export function classifierState(input: ClassifierInput): string {
 export const classifierRequest = (input: ClassifierInput): DecisionRequest => ({
   state: classifierState(input),
   questions: classifierQuestions(input.classifier),
+  ...(input.community ? { community: input.community } : {}),
 });
 
 const NOT_RUN: ClassifierOutcome = Object.freeze({

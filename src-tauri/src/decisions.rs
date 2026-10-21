@@ -8,7 +8,9 @@
 //!   only native code reads (see `jev.rs`).
 //! - `builderlab`: the build's Builderlab (`BUZZ_BUILDERLAB_URL`), with the
 //!   Builderlab sign-in the webview holds. Builds without one have no
-//!   `builderlab` endpoint.
+//!   `builderlab` endpoint. It takes System One's request and answer shapes,
+//!   answers with Jev unless asked for another model, and bills the
+//!   request's community, so a call without one is not sent.
 use crate::jev::JevHost;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -20,7 +22,7 @@ use zeroize::Zeroizing;
 
 pub(crate) const JEV_MODEL: &str = crate::jev::MODEL;
 const TYPESAFE: &str = "https://api.typesafe.ai/v1/systemone";
-const BUILDERLAB_PATH: &str = "/api/goose/v3/openai/decisions";
+const BUILDERLAB_PATH: &str = "/api/goose/v3/builderlab/decisions";
 const INPUT_LIMIT: usize = 128 * 1024;
 const RESPONSE_LIMIT: usize = 64 * 1024;
 const MAX_QUESTIONS: usize = 32;
@@ -63,6 +65,10 @@ pub(crate) struct Request {
     /// How long the caller waits, at most 30 seconds.
     #[serde(default)]
     pub(crate) timeout_ms: Option<u64>,
+    /// The Buzz community (its relay URL) the text comes from. Builderlab
+    /// bills that community and refuses a call without one.
+    #[serde(default)]
+    pub(crate) community: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -167,6 +173,15 @@ impl DecisionsHost {
         if let Err(reason) = validate(&request) {
             return failed(reason);
         }
+        // Builderlab bills the community: without a relay URL for one, the
+        // call is refused before anything is sent.
+        let community = match backend {
+            Backend::Typesafe => None,
+            Backend::Builderlab => match request.community.as_deref().and_then(community_host) {
+                Some(host) => Some(host),
+                None => return failed(Failure::InvalidRequest),
+            },
+        };
         let body = match encode(backend, &request) {
             Ok(body) if body.len() <= INPUT_LIMIT => body,
             Ok(_) => return failed(Failure::InputLimit),
@@ -207,6 +222,7 @@ impl DecisionsHost {
                     client
                         .post(endpoint)
                         .header("x-bb-session-credential", session.as_str())
+                        .header("x-buzz-community", community.as_deref().unwrap_or_default())
                 }
             };
             let response = post
@@ -300,29 +316,26 @@ fn instructions(question: &Question) -> &str {
 
 fn encode(backend: Backend, request: &Request) -> Result<Vec<u8>, Failure> {
     let body = match backend {
-        // Builderlab's decisions: an ordered list of named questions.
+        // Builderlab's System One: the question's type is its field. No
+        // `model`, so Jev answers.
         Backend::Builderlab => {
-            let questions: Vec<Value> = request
+            let questions: serde_json::Map<String, Value> = request
                 .questions
                 .iter()
                 .map(|(name, q)| {
-                    let mut question = json!({ "name": name, "instructions": instructions(q) });
+                    let mut question = json!({ "instructions": instructions(q) });
                     let (key, typed) = match q {
-                        Question::YesNo { .. } => ("predicate", json!({})),
-                        Question::Choice { options, .. } => (
-                            "choice",
-                            json!({ "choices": options
-                                .iter()
-                                .map(|(value, description)| json!({ "value": value, "description": description }))
-                                .collect::<Vec<_>>() }),
-                        ),
+                        Question::YesNo { .. } => ("noul", json!({})),
+                        Question::Choice { options, .. } => {
+                            ("choice", json!({ "options": options }))
+                        }
                         Question::Score { levels, .. } => ("score", json!({ "levels": levels })),
                     };
                     question[key] = typed;
-                    question
+                    (name.clone(), question)
                 })
                 .collect();
-            json!({ "input": request.state, "questions": questions })
+            json!({ "state": request.state, "questions": questions })
         }
         // TypeSafe's own `/v1/systemone`: a `type` and its `criteria`.
         Backend::Typesafe => {
@@ -375,35 +388,21 @@ fn decode(
     if backend == Backend::Typesafe && model != JEV_MODEL {
         return Err(Failure::InvalidResponse);
     }
-    let raw: BTreeMap<String, &Value> = match (backend, value.get("answers")) {
-        (Backend::Typesafe, Some(Value::Object(map))) => {
-            map.iter().map(|(n, a)| (n.clone(), a)).collect()
-        }
-        (Backend::Builderlab, Some(Value::Array(list))) => {
-            let mut named = BTreeMap::new();
-            for answer in list {
-                let name = answer
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or(Failure::InvalidResponse)?;
-                // Two answers to one question: neither can be trusted.
-                if named.insert(name.to_owned(), answer).is_some() {
-                    return Err(Failure::InvalidResponse);
-                }
-            }
-            named
-        }
-        _ => return Err(Failure::InvalidResponse),
+    if model.is_empty() {
+        return Err(Failure::InvalidResponse);
+    }
+    let Some(Value::Object(raw)) = value.get("answers") else {
+        return Err(Failure::InvalidResponse);
     };
     let mut answers = BTreeMap::new();
     for (name, question) in &request.questions {
-        let answer = raw.get(name).copied().ok_or(Failure::InvalidResponse)?;
+        let answer = raw.get(name).ok_or(Failure::InvalidResponse)?;
         // TypeSafe puts the typed body beside a `type` tag; Builderlab wraps
         // it under the type's field.
         let (body, kind) = match backend {
             Backend::Typesafe => (answer, answer.get("type").and_then(Value::as_str)),
             Backend::Builderlab => {
-                let mut typed = ["predicate", "choice", "score"]
+                let mut typed = ["noul", "choice", "score"]
                     .into_iter()
                     .filter_map(|k| answer.get(k).map(|b| (b, Some(k))));
                 match (typed.next(), typed.next()) {
@@ -415,10 +414,11 @@ fn decode(
         };
         let decoded = match (question, kind) {
             (Question::YesNo { .. }, Some("noul")) => Answer::YesNo {
-                probability: unit(body.get("noul"))?,
-            },
-            (Question::YesNo { .. }, Some("predicate")) => Answer::YesNo {
-                probability: unit(body.get("probability"))?,
+                // TypeSafe's value is the field itself; Builderlab's is in it.
+                probability: unit(match backend {
+                    Backend::Typesafe => body.get("noul"),
+                    Backend::Builderlab => body.get("value"),
+                })?,
             },
             (Question::Choice { options, .. }, Some("choice")) => {
                 let choice = body
@@ -486,6 +486,24 @@ fn list_or_map(
             .collect(),
         _ => Err(Failure::InvalidResponse),
     }
+}
+
+/// The community as Builderlab names it: the relay's host, lowercase, with
+/// its port only when not the scheme's default. `None` when it is not a relay
+/// URL.
+fn community_host(community: &str) -> Option<String> {
+    let url = reqwest::Url::parse(community.trim()).ok()?;
+    if !matches!(url.scheme(), "wss" | "ws" | "https" | "http") {
+        return None;
+    }
+    let host = url.host_str()?.trim_end_matches('.');
+    if host.is_empty() {
+        return None;
+    }
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
 }
 
 async fn read_limited(mut response: reqwest::Response) -> Result<Vec<u8>, Failure> {
