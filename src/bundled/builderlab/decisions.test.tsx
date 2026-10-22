@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { builderlabProvider, type BuilderlabDecide } from "./decisions";
 import type { Credential } from "./oauth/browser";
@@ -9,6 +12,7 @@ const credential = (value: string): Credential => ({
     subject: "user",
     email: "a@example.com",
     canUseRemoteAgents: true,
+    canUseBuilderlabDecisions: true,
   },
 });
 const request = {
@@ -118,4 +122,32 @@ it("is unavailable outside the desktop app", async () => {
     outcome: "failed",
     reason: "unavailable",
   });
+});
+
+it("sends nothing to Builderlab unless the account may use decisions", async () => {
+  const session = createOAuthSession(async () => ({
+    value: "first",
+    account: {
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
+  }));
+  await session.signIn();
+  const decide = vi.fn<BuilderlabDecide>();
+  const provider = builderlabProvider(session, true, decide);
+  // A user who chose Builderlab gets failures, not another provider.
+  expect(provider.status()).toBe("needs-setup");
+  await expect(provider.decide(request, { signal })).resolves.toEqual({
+    outcome: "failed",
+    reason: "unauthorized",
+  });
+  expect(decide).not.toHaveBeenCalled();
+  const Settings = provider.Settings;
+  if (!Settings) throw new Error("expected settings");
+  render(<Settings active={() => true} />);
+  expect(
+    screen.getByText(/Builderlab decisions are not turned on for your account/),
+  ).toHaveAttribute("role", "status");
 });

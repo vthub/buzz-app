@@ -10,6 +10,7 @@ const signedIn = (value: string): Credential => ({
     subject: "user",
     email: "a@example.com",
     canUseRemoteAgents: true,
+    canUseBuilderlabDecisions: false,
   },
 });
 

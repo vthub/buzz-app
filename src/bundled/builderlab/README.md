@@ -153,3 +153,10 @@ The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 `true` enables remote agents. Otherwise, Settings and the Agents provider show
 “Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
 this capability.
+
+The plugin also registers Builderlab as a Decisions API provider. It reads
+`capabilities.can_use_builderlab_decisions` the same way: only explicit `true`
+makes the provider ready. Otherwise its Settings show “Coming soon” and no
+decision request goes to Builderlab. A user who already chose Builderlab gets
+failed decisions, not another provider, until the capability returns or they
+choose a different provider.

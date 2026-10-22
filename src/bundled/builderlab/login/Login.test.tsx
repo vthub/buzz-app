@@ -16,6 +16,7 @@ const credential: Credential = {
     subject: "user",
     email: "a@example.com",
     canUseRemoteAgents: true,
+    canUseBuilderlabDecisions: false,
   },
 };
 it("shows a desktop requirement in the browser", () => {
@@ -52,7 +53,12 @@ it("sign-out clears the credential and restores the sign-in action", async () =>
 it("shows a signed-in confirmation when email is unavailable", async () => {
   const session = createOAuthSession(async () => ({
     value: "private-token",
-    account: { subject: "user", email: "", canUseRemoteAgents: true },
+    account: {
+      subject: "user",
+      email: "",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   render(<Login session={session} available active={() => true} />);
   await userEvent

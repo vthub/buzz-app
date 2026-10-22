@@ -37,6 +37,7 @@ async function fixture(signedIn = true) {
       subject: "account",
       email: "a@example.com",
       canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
     },
   }));
   const session = createOAuthSession(acquire);

@@ -24,7 +24,12 @@ async function setup(
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
   const session = createOAuthSession(async () => ({
     value: "session",
-    account: { subject: "auth0|owner", email: "", canUseRemoteAgents },
+    account: {
+      subject: "auth0|owner",
+      email: "",
+      canUseRemoteAgents,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   await session.signIn();
   const tools = new Map<string, AddedTool>();

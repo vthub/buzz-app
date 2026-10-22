@@ -37,7 +37,12 @@ it.each(["create", "share"] as const)(
     let owner = "A";
     const session = createOAuthSession(async () => ({
       value: owner,
-      account: { subject: owner, email: "", canUseRemoteAgents: true },
+      account: {
+        subject: owner,
+        email: "",
+        canUseRemoteAgents: true,
+        canUseBuilderlabDecisions: false,
+      },
     }));
     await session.signIn();
     const held = deferred<HostResponse>();
@@ -72,7 +77,12 @@ it.each(["create", "share"] as const)(
 it("preserves the reserved app ID when sign-out interrupts initialization", async () => {
   const session = createOAuthSession(async () => ({
     value: "A",
-    account: { subject: "A", email: "", canUseRemoteAgents: true },
+    account: {
+      subject: "A",
+      email: "",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   await session.signIn();
   const held = deferred<HostResponse>();
@@ -109,7 +119,12 @@ it("preserves the reserved app ID when sign-out interrupts initialization", asyn
 async function setup(responses: HostResponse[], signedIn = true) {
   const session = createOAuthSession(async () => ({
     value: "secret-session",
-    account: { subject: "auth0|owner", email: "", canUseRemoteAgents: true },
+    account: {
+      subject: "auth0|owner",
+      email: "",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   if (signedIn) await session.signIn();
   const requests: (HostRequest | HostUpload)[] = [];

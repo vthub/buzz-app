@@ -9,6 +9,7 @@ const credential: Credential = {
     subject: "user",
     email: "a@example.com",
     canUseRemoteAgents: true,
+    canUseBuilderlabDecisions: false,
   },
 };
 it("keeps credentials outside UI snapshots and clears them on sign-out and disposal", async () => {

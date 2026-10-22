@@ -2,12 +2,14 @@
 // native code sends with each call. Settings > Decisions API shows the same
 // sign-in control as this plugin's card while it is selected.
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useSyncExternalStore } from "react";
 import type {
   DecisionProvider,
   DecisionProviderStatus,
   DecisionReply,
 } from "../../features/decisions/service";
 import { Login } from "./login/Login";
+import type { Credential } from "./oauth/browser";
 import type { OAuthSession } from "./oauth/session";
 
 /** Native `decide` on Builderlab, with the sign-in to send. */
@@ -30,19 +32,30 @@ export function builderlabProvider(
     session.snapshot().status === "signed-in"
       ? session.credential()
       : undefined;
+  // Builderlab reports at sign-in whether this account may use decisions.
+  // Only an explicit yes enables them; otherwise no call goes to Builderlab,
+  // and a user who chose Builderlab gets failures, not another provider.
+  const permitted = (credential: { account: Credential["account"] }) =>
+    credential.account.canUseBuilderlabDecisions;
   return {
     id: "builderlab",
     label: "Builderlab",
     description: "Use your Builderlab account.",
     // A sign-in in progress cannot answer yet.
-    status: (): DecisionProviderStatus =>
-      native && signedIn() ? "ready" : "needs-setup",
+    status: (): DecisionProviderStatus => {
+      const credential = signedIn();
+      return native && credential && permitted(credential)
+        ? "ready"
+        : "needs-setup";
+    },
     subscribe: session.subscribe,
     decide: async (request) => {
       if (!native) return { outcome: "failed", reason: "unavailable" };
       const credential = signedIn();
       if (!credential)
         return { outcome: "failed", reason: "missing_credentials" };
+      if (!permitted(credential))
+        return { outcome: "failed", reason: "unauthorized" };
       let reply: unknown;
       try {
         reply = await native(request, credential.value);
@@ -81,12 +94,41 @@ export function builderlabProvider(
       ) as DecisionReply;
     },
     Settings: ({ active }) => (
+      <BuilderlabDecisionsSettings
+        session={session}
+        loginAvailable={loginAvailable}
+        active={active}
+      />
+    ),
+  };
+}
+
+function BuilderlabDecisionsSettings({
+  session,
+  loginAvailable,
+  active,
+}: {
+  session: OAuthSession;
+  loginAvailable: boolean;
+  active: () => boolean;
+}) {
+  const login = useSyncExternalStore(session.subscribe, session.snapshot);
+  return (
+    <div className="grid gap-3">
       <Login
         session={session}
         available={loginAvailable}
         active={active}
         showHeading={false}
       />
-    ),
-  };
+      {login.status === "signed-in" &&
+        !login.account?.canUseBuilderlabDecisions && (
+          <p role="status" className="text-body-sm text-secondary">
+            Coming soon: Builderlab decisions are not turned on for your
+            account. Decisions sent here fail until they are. Sign out and back
+            in to check again, or choose another provider.
+          </p>
+        )}
+    </div>
+  );
 }

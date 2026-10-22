@@ -135,6 +135,7 @@ async function fixture({
       subject: account.subject,
       email: "a@example.com",
       canUseRemoteAgents: false,
+      canUseBuilderlabDecisions: false,
     },
   }));
   const dispose = startKnownCommunitiesSync({
@@ -306,6 +307,7 @@ it("halts on a 200 list the real client cannot read, forgetting no membership", 
       subject: "user",
       email: "a@example.com",
       canUseRemoteAgents: false,
+      canUseBuilderlabDecisions: false,
     },
   }));
   // A proxy's block page, a truncated or an empty body: a 200 that is no list.

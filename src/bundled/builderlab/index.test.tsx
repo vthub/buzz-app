@@ -492,7 +492,10 @@ it.each([
       result = {
         subject: "user",
         email: "a@example.com",
-        capabilities: { can_use_remote_agents: true },
+        capabilities: {
+          can_use_remote_agents: true,
+          can_use_builderlab_decisions: true,
+        },
       };
     } else if (url.endsWith("/list-agents")) {
       result = {

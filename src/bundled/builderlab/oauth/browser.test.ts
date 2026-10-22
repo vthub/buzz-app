@@ -54,6 +54,7 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
       subject: "user",
       email: "a@example.com",
       canUseRemoteAgents: false,
+      canUseBuilderlabDecisions: false,
     },
   });
   const options = vi.mocked(bridge.begin).mock.calls[0]?.[0];
@@ -116,6 +117,34 @@ it.each([
       });
     const credential = await browserCredential(host, controller.signal, bridge);
     expect(credential.account.canUseRemoteAgents).toBe(expected);
+  },
+);
+
+it.each([
+  [undefined, false],
+  [{}, false],
+  [{ can_use_remote_agents: true }, false],
+  [{ can_use_builderlab_decisions: false }, false],
+  [{ can_use_builderlab_decisions: "true" }, false],
+  [{ can_use_builderlab_decisions: 1 }, false],
+  [{ can_use_builderlab_decisions: true }, true],
+])(
+  "normalizes decisions capability %j to %s",
+  async (capabilities, expected) => {
+    const { host, bridge, controller } = fixture();
+    vi.mocked(host.request)
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: '{"session_credential":"private-token"}',
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ ...account, capabilities }),
+      });
+    const credential = await browserCredential(host, controller.signal, bridge);
+    expect(credential.account.canUseBuilderlabDecisions).toBe(expected);
   },
 );
 
@@ -223,7 +252,12 @@ it.each([
       });
     expect(await browserCredential(host, controller.signal, bridge)).toEqual({
       value: "private-token",
-      account: { subject: "user", email: expected, canUseRemoteAgents: false },
+      account: {
+        subject: "user",
+        email: expected,
+        canUseRemoteAgents: false,
+        canUseBuilderlabDecisions: false,
+      },
     });
   },
 );

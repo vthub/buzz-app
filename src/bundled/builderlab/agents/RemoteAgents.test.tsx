@@ -33,6 +33,7 @@ async function fixture() {
       subject: "user",
       email: "a@example.com",
       canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
     },
   }));
   await session.signIn();

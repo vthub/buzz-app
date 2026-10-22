@@ -39,7 +39,12 @@ afterEach(() => {
 async function fixture(subject = "account-a") {
   const session = createOAuthSession(async () => ({
     value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
+    account: {
+      subject,
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   await session.signIn();
   const request = vi.fn<Host["request"]>();
@@ -286,6 +291,7 @@ it("rejects a stop at once when signed out, without signing in or reaching Build
       subject: "account-a",
       email: "a@example.com",
       canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
     },
   }));
   const session = createOAuthSession(acquire);

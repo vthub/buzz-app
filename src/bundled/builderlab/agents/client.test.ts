@@ -33,7 +33,12 @@ const bound = (pubkey_hex = viewer) => response({ identity: { pubkey_hex } });
 async function fixture(subject = "user", canUseRemoteAgents = true) {
   const session = createOAuthSession(async () => ({
     value: "secret",
-    account: { subject, email: "a@example.com", canUseRemoteAgents },
+    account: {
+      subject,
+      email: "a@example.com",
+      canUseRemoteAgents,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   await session.signIn();
   const host: Host = {

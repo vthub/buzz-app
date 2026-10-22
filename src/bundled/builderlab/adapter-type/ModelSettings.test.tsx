@@ -30,7 +30,12 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
   let offline = false;
   const session = createOAuthSession(async () => ({
     value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
+    account: {
+      subject,
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   await session.signIn();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {

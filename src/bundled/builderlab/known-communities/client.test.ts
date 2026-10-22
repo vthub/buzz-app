@@ -24,6 +24,7 @@ async function fixture(reply: HostResponse | (() => Promise<HostResponse>)) {
       subject: "user",
       email: "a@example.com",
       canUseRemoteAgents: false,
+      canUseBuilderlabDecisions: false,
     },
   }));
   await session.signIn();
