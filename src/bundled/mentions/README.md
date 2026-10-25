@@ -212,8 +212,8 @@ The **local** choices are the ones known without the directory search: the
 channel's members and the agents the client offers for mention (section 1, items
 1 to 3, or a Solo chat's own agent list). The client selects:
 
-1. the exact name among the local choices, once every member's name is known;
-   otherwise
+1. the exact name among the local choices, once every member's name is known
+   or known to be absent; otherwise
 2. the exact name among the full choice set, once the full choice set is known:
    no directory search for this query is waiting, running, or failed, and the
    search reported no more pages.
@@ -225,10 +225,12 @@ Local choices show before directory results (section 6), so a unique local name
 selects at once: directory results cannot make it ambiguous, whether or not the
 search has found them yet. A longer directory name still blocks Space once the
 search reports it, but not before. A member whose name is not known yet may be a
-namesake, so until it is, only step 2 applies. A name that only a directory
-result has could still gain a namesake from a pending search, so Space MUST NOT
-select it before the search finishes. Otherwise Space is a normal space. Tab,
-Enter, and a click select the highlighted row.
+namesake, so until it is, only step 2 applies. A member whose profile read
+completed without finding a profile has no name, so it cannot be a namesake and
+does not hold step 1 back; a failed read is not evidence. A name that only a
+directory result has could still gain a namesake from a pending search, so Space
+MUST NOT select it before the search finishes. Otherwise Space is a normal
+space. Tab, Enter, and a click select the highlighted row.
 
 ## 6. List stability (desktop behavior; not in the fixtures)
 

@@ -357,3 +357,36 @@ it("promotes a queued background profile read when foreground demand joins it", 
     reader.dispose();
   }
 });
+
+it("records identities a completed read found no profile for, until one arrives", async () => {
+  const other = keypair();
+  const third = keypair();
+  const read = vi.fn(async () => [profile(user, { name: "Mic" })]);
+  const directory = createProfileDirectory({ read });
+  const listener = vi.fn();
+  directory.queries.subscribe(listener);
+  try {
+    await directory.ensure([user.pubkey, other.pubkey]);
+    const absent = directory.queries.unnamed?.();
+    expect(absent).toEqual(new Set([other.pubkey]));
+    // Once for the profile, once for the absence.
+    expect(listener).toHaveBeenCalledTimes(2);
+    // A failed read is not evidence.
+    read.mockRejectedValueOnce(new Error("offline"));
+    await expect(directory.ensure([third.pubkey])).rejects.toThrow("offline");
+    expect(directory.queries.unnamed?.()).toBe(absent);
+    // A profile that arrives later outranks the absence.
+    directory.accept([profile(other, { name: "Nu" })]);
+    expect(directory.queries.snapshot().get(other.pubkey)?.name).toBe("Nu");
+    expect(directory.queries.unnamed?.()).toEqual(new Set());
+    // Clearing forgets the evidence and tells subscribers so.
+    await directory.ensure([third.pubkey]);
+    expect(directory.queries.unnamed?.()).toEqual(new Set([third.pubkey]));
+    listener.mockClear();
+    directory.clear();
+    expect(directory.queries.unnamed?.()).toEqual(new Set());
+    expect(listener).toHaveBeenCalled();
+  } finally {
+    directory.dispose();
+  }
+});

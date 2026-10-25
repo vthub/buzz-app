@@ -16,6 +16,8 @@ export interface ProfileQueries {
   ensure(ids: readonly string[], priority?: Priority): Promise<void>;
   /** The winning signed kind 0 retained for one identity, for provenance checks. */
   event?(pubkey: string): RelayEvent | undefined;
+  /** Identities a completed read found no profile for, until one arrives. */
+  unnamed?(): ReadonlySet<string>;
   /** Cryptographically verified owner of the retained signed profile head. */
   owner?(pubkey: string): string | undefined;
 }
@@ -34,6 +36,8 @@ export function createProfileDirectory(
   >();
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
+  // Replaced, never mutated, so stores can compare it like `snapshot`.
+  let unnamed: ReadonlySet<string> = new Set();
   let controller = new AbortController();
   let closed = false;
   function accept(incoming: readonly RelayEvent[]) {
@@ -93,9 +97,18 @@ export function createProfileDirectory(
     if (
       next.size !== snapshot.size ||
       [...next].some(([id, value]) => snapshot.get(id) !== value)
-    )
+    ) {
       snapshot = next;
-    else if (!headChanged) return;
+      if ([...unnamed].some((id) => next.has(id)))
+        unnamed = new Set([...unnamed].filter((id) => !next.has(id)));
+    } else if (!headChanged) return;
+    for (const listener of listeners) notify(listener);
+  }
+  /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
+  function missed(ids: readonly string[]) {
+    const fresh = ids.filter((id) => !snapshot.has(id) && !unnamed.has(id));
+    if (!fresh.length) return;
+    unnamed = new Set([...unnamed, ...fresh].slice(-1024));
     for (const listener of listeners) notify(listener);
   }
   async function ensure(
@@ -135,8 +148,9 @@ export function createProfileDirectory(
         work: reader
           .read([{ kinds: [0], authors, limit: 500 }], { signal, priority })
           .then((result) => {
-            if (!signal.aborted)
-              accept(result.filter((event) => authors.includes(event.pubkey)));
+            if (signal.aborted) return;
+            accept(result.filter((event) => authors.includes(event.pubkey)));
+            missed(authors);
           })
           .finally(() => {
             for (const id of authors)
@@ -153,7 +167,9 @@ export function createProfileDirectory(
     controller = new AbortController();
     pending.clear();
     events.clear();
-    publish();
+    const forgot = unnamed.size > 0;
+    unnamed = new Set();
+    publish(forgot);
   }
   const queries: ProfileQueries = Object.freeze({
     snapshot: () => snapshot,
@@ -165,6 +181,7 @@ export function createProfileDirectory(
     },
     ensure,
     event: (pubkey: string) => events.peek(pubkey),
+    unnamed: () => unnamed,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

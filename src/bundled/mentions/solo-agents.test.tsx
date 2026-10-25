@@ -40,6 +40,9 @@ import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 import { npubEncode } from "nostr-tools/nip19";
 import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
+import { createProfileDirectory } from "../../features/relay/profile-directory";
+import type { RelayEvent } from "../../features/relay/events";
+import { keypair, profile } from "../../features/relay/testing";
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -2917,3 +2920,117 @@ it.each([
     }
   },
 );
+/**
+ * A real profile directory, so a member read that settles or fails is evidence
+ * the chooser sees. The directory search never settles: only step 1 of the
+ * Space rule can select here.
+ */
+function unnamedMemberFixture() {
+  const h = setup();
+  const named = keypair();
+  const reads: {
+    authors: readonly string[];
+    resolve: (events: RelayEvent[]) => void;
+    reject: (error: Error) => void;
+  }[] = [];
+  const directory = createProfileDirectory({
+    read: (filters) =>
+      new Promise<RelayEvent[]>((resolve, reject) => {
+        reads.push({ authors: filters[0]?.authors ?? [], resolve, reject });
+      }),
+  });
+  directory.accept([profile(named, { name: "José" })]);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        channelType: "stream" as const,
+        members: [named.pubkey, otherMember],
+      },
+    ],
+  };
+  const names = bindNames(
+    { profiles: directory.queries, agentLibrary: h.library.queries },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
+  const publish = vi.fn();
+  const result = () =>
+    publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const view = render(
+    <MentionCompletion
+      session={
+        {
+          ...h.session,
+          profiles: directory.queries,
+          names,
+          channels: { ...h.session.channels, list: () => list },
+          directMessages: {
+            ...h.session.directMessages,
+            people: () => new Promise<DirectoryPage>(() => {}),
+          },
+        } as unknown as RelaySession
+      }
+      scope="space-test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@jose", start: 5, end: 5 }}
+      query={{ start: 0, end: 5, query: "jose" }}
+      publish={publish}
+    />,
+  );
+  return {
+    member: named.pubkey,
+    reads,
+    directory,
+    result,
+    canSpace: (id: string) =>
+      result()
+        ?.items.find((item) => item.id === id)
+        ?.canSelect?.(" "),
+    dispose() {
+      view.unmount();
+      names.dispose();
+      directory.dispose();
+      h.library.dispose();
+    },
+  };
+}
+it("Space selects a member's name once a read finds no profile for another member", async () => {
+  const h = unnamedMemberFixture();
+  try {
+    await waitFor(() =>
+      expect(h.reads.map((read) => read.authors)).toEqual([[otherMember]]),
+    );
+    await waitFor(() =>
+      expect(h.result()?.items.some((item) => item.id === h.member)).toBe(true),
+    );
+    // While its read is in flight the other member may still be a namesake.
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.canSpace(h.member)).toBe(false);
+    await act(async () => h.reads[0]?.resolve([]));
+    // Known unnamed: no name to be a namesake, and no directory wait.
+    await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+    expect(h.canSpace(h.member)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+it("Space keeps waiting after a member's profile read fails until a retry settles it", async () => {
+  const h = unnamedMemberFixture();
+  try {
+    await waitFor(() => expect(h.reads).toHaveLength(1));
+    await act(async () => h.reads[0]?.reject(new Error("offline")));
+    // A failed read is not evidence that the member has no name.
+    expect(h.directory.queries.unnamed?.()).toEqual(new Set());
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.canSpace(h.member)).toBe(false);
+    act(() => h.result()?.retry?.());
+    await waitFor(() => expect(h.reads).toHaveLength(2));
+    expect(h.reads[1]?.authors).toEqual([otherMember]);
+    await act(async () => h.reads[1]?.resolve([]));
+    await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+    expect(h.canSpace(h.member)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});

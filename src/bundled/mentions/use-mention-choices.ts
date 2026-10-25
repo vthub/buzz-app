@@ -47,6 +47,11 @@ export function useMentionChoices(
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
+  const unnamed = useSyncExternalStore(
+    session.profiles.subscribe,
+    () => session.profiles.unnamed?.(),
+    () => session.profiles.unnamed?.(),
+  );
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -176,7 +181,10 @@ export function useMentionChoices(
   const outside = open
     ? rank(candidates.filter((c) => !local.has(c.recipient.pubkey)))
     : [];
-  const missingNames = channel?.members?.some((key) => !profiles.has(key));
+  // A member a completed read found no profile for has no name to be a namesake.
+  const missingNames = channel?.members?.some(
+    (key) => !profiles.has(key) && !unnamed?.has(key),
+  );
   if (open && !rows && !membersPending) {
     const ranked = rank(
       candidates.filter((c) => local.has(c.recipient.pubkey)),
