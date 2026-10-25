@@ -6,11 +6,14 @@ import { allowsOutsideMentions } from "../../features/messages/mention-admission
 type Person = Awaited<
   ReturnType<ComposerSession["directMessages"]["people"]>
 >["people"][number];
-type Page = { people: readonly Person[]; more: boolean };
+export type MentionDirectoryPage = { people: readonly Person[]; more: boolean };
+type Page = MentionDirectoryPage;
 const empty: readonly Person[] = [];
 /** Typing pause before an uncached query reaches the network. */
 export const MENTION_DIRECTORY_DELAY_MS = 200;
 const CACHE_LIMIT = 100;
+// An exact key is an author lookup, which name-prefix evidence cannot refute.
+const exactKey = (query: string) => /^[0-9a-f]{64}$/.test(query.trim());
 
 // Successful non-empty first pages, per session (community/viewer) and query.
 // Session lifetime bounds staleness; errors are not cached, so Retry reads
@@ -53,6 +56,33 @@ const exhausted = new WeakMap<ComposerSession, string>();
 const refutedPage: Page = { people: empty, more: false };
 
 /**
+ * The first page for `query`: the shared cache, or one relay read that fills it.
+ * The chooser and the pending-mention resolver both read through here, so a
+ * page either has found is the other's cache hit.
+ */
+export async function fetchMentionDirectoryPage(
+  session: ComposerSession,
+  query: string,
+  signal: AbortSignal,
+): Promise<Page> {
+  const hit = cached(session, query);
+  if (hit) return hit;
+  exhausted.delete(session);
+  const { people, hasMore } = await session.directMessages.people(
+    query,
+    1,
+    signal,
+  );
+  const page = { people, more: hasMore };
+  if (signal.aborted) return page;
+  if (people.length) remember(session, query, page);
+  // The relay ignores non-word text, so it only refutes word prefixes.
+  else if (!hasMore && !exactKey(query) && /[\p{L}\p{N}]/u.test(query))
+    exhausted.set(session, query);
+  return page;
+}
+
+/**
  * Directory pages belong to this menu and community, not the global profile
  * cache. While a new query waits or loads, the last settled page stays visible
  * so callers can keep its still-matching people instead of blanking the list.
@@ -89,12 +119,10 @@ export function useMentionDirectory(
     state.lifetime === lifetime
       ? state
       : undefined;
-  // An exact key is an author lookup, which name-prefix evidence cannot refute.
-  const exactKey = /^[0-9a-f]{64}$/.test(query.trim());
   const prefix = exhausted.get(session);
   const refuted =
     attempt === 0 &&
-    !exactKey &&
+    !exactKey(query) &&
     prefix !== undefined &&
     query.length > prefix.length &&
     query.startsWith(prefix);
@@ -109,20 +137,11 @@ export function useMentionDirectory(
     const controller = new AbortController();
     const current = { session, query, attempt, lifetime };
     const timer = setTimeout(() => {
-      exhausted.delete(session);
-      void session.directMessages.people(query, 1, controller.signal).then(
-        ({ people, hasMore }) => {
+      void fetchMentionDirectoryPage(session, query, controller.signal).then(
+        (page) => {
           if (controller.signal.aborted) return;
-          const page = { people, more: hasMore };
-          if (people.length) {
-            remember(session, query, page);
-            setState(current);
-            return;
-          }
-          // The relay ignores non-word text, so it only refutes word prefixes.
-          if (!hasMore && !exactKey && /[\p{L}\p{N}]/u.test(query))
-            exhausted.set(session, query);
-          setState({ ...current, page });
+          // A non-empty page is now cached; `own.page` keeps an empty one.
+          setState(page.people.length ? current : { ...current, page });
         },
         () => {
           if (!controller.signal.aborted)
@@ -137,7 +156,7 @@ export function useMentionDirectory(
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, query, searching, exactKey, attempt, lifetime]);
+  }, [session, query, searching, attempt, lifetime]);
   if (hit) settle(session, lifetime, hit);
   const error = active && !hit ? own?.error : undefined;
   const shown = hit ?? settled.get(session)?.get(lifetime);
