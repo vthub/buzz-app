@@ -473,9 +473,9 @@ recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
-longer name beginning with that name plus a space prevents selection. Partial
-names, ambiguous names, modified Space, IME composition, code and protected literal
-ranges keep ordinary editing behavior. Selection rechecks available evidence and
+longer name beginning with that name plus a space prevents selection, unless it is
+another name of that same identity. Partial names, ambiguous names, modified Space,
+IME composition, code and protected literal ranges keep ordinary editing behavior. Selection rechecks available evidence and
 stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
 
 The composer rejects already-known archived recipients (never the viewer) at

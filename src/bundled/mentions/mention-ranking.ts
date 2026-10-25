@@ -86,19 +86,25 @@ export function rankMentions(
  * Space is intent only for one exact key across the full, uncapped choice set.
  * Every choice can continue the name; only choices `among` can equal it. A key
  * qualifier or generated `(agent)` suffix only tells namesakes apart, so it
- * never continues the name.
+ * never continues the name. Nor does a choice's own longer name when that same
+ * choice also has the exact name: one identity is not its own namesake.
  */
 export const exactMention = (
   choices: readonly MentionChoice[],
   query: string,
   among: (choice: MentionChoice) => boolean = () => true,
-) =>
-  exactName(
+) => {
+  const needle = normalized(query);
+  const names = (c: MentionChoice) => [...c.aliases, c.label];
+  return exactName(
     choices,
-    (c) => [...c.aliases, c.label],
+    names,
     query,
     (c) => c.aliases.length > 0 && among(c),
     (c) => {
+      // `Example Agent` never keeps `example` from selecting the agent that is
+      // also named `Example`.
+      if (names(c).some((name) => normalized(name) === needle)) return [];
       const label =
         c.qualifier && c.label.endsWith(` · ${c.qualifier}`)
           ? c.label.slice(0, -(c.qualifier.length + 3))
@@ -110,3 +116,4 @@ export const exactMention = (
         : [...c.aliases, label];
     },
   )?.recipient.pubkey;
+};

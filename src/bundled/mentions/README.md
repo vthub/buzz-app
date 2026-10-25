@@ -203,7 +203,10 @@ set of choices when all of these are true:
   (`Jose Luis` and `Jose-Luis` continue `jose`; `Josefa` does not). A label's
   key qualifier or generated `(agent)` suffix only tells namesakes apart, so
   `Honey · 4prr` and a generated `Honey (agent)` do not continue `honey`.
-  A literal name `Honey (agent)` still continues `honey`.
+  A literal name `Honey (agent)` still continues `honey`. A choice's own longer
+  name does not continue the query when that same choice also has an alias or
+  label equal to it: an agent known as both `Example` and `Example Agent` is one
+  identity, not a namesake of itself, so `example` selects it.
 
 The **local** choices are the ones known without the directory search: the
 channel's members and the agents the client offers for mention (section 1, items
