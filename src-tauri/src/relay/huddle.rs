@@ -3,6 +3,7 @@
 mod audio;
 
 use super::{origin, request_url, send, verify_signature, Result};
+use crate::federated_identity::FederatedIdentity;
 use crate::identity::{EventTemplate, IdentityHost};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -148,6 +149,7 @@ fn confirm_member(room: &str, viewer: &str) -> EventTemplate {
 }
 async fn publish(
     host: &IdentityHost,
+    fi: &FederatedIdentity,
     community: &str,
     event: EventTemplate,
     viewer: &str,
@@ -169,6 +171,7 @@ async fn publish(
         .to_owned();
     let reply = send(
         host,
+        Some(fi),
         request_url(community, "/events", "POST")?,
         "POST",
         Some(signed.to_string()),
@@ -218,11 +221,24 @@ fn publication_receipt(status: u16, body: &str, expected: &str, operation: &str)
     Ok(())
 }
 
-async fn admit_membership(host: &IdentityHost, call: &Call) -> Result<bool> {
+async fn admit_membership(
+    host: &IdentityHost,
+    fi: &FederatedIdentity,
+    call: &Call,
+) -> Result<bool> {
     if host.viewer().await? != call.viewer {
         return Err("Your identity changed. Reopen Huddles.".into());
     }
-    let info = send(host, origin(&call.community)?, "GET", None, false, 65536).await?;
+    let info = send(
+        host,
+        Some(fi),
+        origin(&call.community)?,
+        "GET",
+        None,
+        false,
+        65536,
+    )
+    .await?;
     let info: Value = serde_json::from_str(&info.body).map_err(|_| "Relay identity unavailable")?;
     let authority = info["self"]
         .as_str()
@@ -239,6 +255,7 @@ async fn admit_membership(host: &IdentityHost, call: &Call) -> Result<bool> {
         .collect();
     let reply = send(
         host,
+        Some(fi),
         request_url(&call.community, "/query", "POST")?,
         "POST",
         Some(serde_json::to_string(&filters).map_err(|_| "Invalid membership query")?),
@@ -259,6 +276,33 @@ async fn admit_membership(host: &IdentityHost, call: &Call) -> Result<bool> {
         .room
         .as_ref()
         .is_some_and(|room| membership_allows(&events, authority, &call.viewer, &[room.as_str()])))
+}
+
+async fn while_audio_authorized<T>(
+    connection: &mut audio::Connection,
+    operation: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    let Some(expires_at) = connection.expires_at else {
+        return operation.await;
+    };
+    let cancellation = connection.cancellation.clone();
+    tokio::pin!(operation);
+    tokio::select! {
+        biased;
+        result = &mut operation => result,
+        _ = cancellation.cancelled() => {
+            drop(connection.socket.take());
+            match operation.as_mut().await {
+                Err(error) => Err(error),
+                Ok(_) => Err("Huddle authorization changed. Join again to reconnect.".into()),
+            }
+        }
+        _ = tokio::time::sleep_until(expires_at) => {
+            drop(connection.socket.take());
+            operation.as_mut().await?;
+            Err("Huddle authorization expired. Join again to reconnect.".into())
+        }
+    }
 }
 // Only relay-signed current rosters count. Joining an existing room may use
 // either roster; creating a room still supplies only its parent. The audio
@@ -293,6 +337,7 @@ fn has_tag(event: &Value, name: &str, value: &str) -> bool {
 pub(crate) fn huddle_open<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     huddles: tauri::State<'_, Huddles>,
     call: Call,
     updates: Channel<Update>,
@@ -315,9 +360,19 @@ pub(crate) fn huddle_open<R: tauri::Runtime>(
         touched: touched.clone(),
     });
     let host = host.inner().clone();
+    let fi = fi.inner().clone();
     let huddles = huddles.inner().clone();
     tauri::async_runtime::spawn(async move {
-        let result = run(&host, &call, &updates, cancelled.clone(), receiver, touched).await;
+        let result = run(
+            &host,
+            &fi,
+            &call,
+            &updates,
+            cancelled.clone(),
+            receiver,
+            touched,
+        )
+        .await;
         let error = result.err().filter(|_| !*cancelled.borrow());
         let _ = updates.send(Update::Ended { error });
         if let Ok(mut slot) = huddles.0.lock() {
@@ -333,6 +388,7 @@ pub(crate) fn huddle_open<R: tauri::Runtime>(
 
 async fn run(
     host: &IdentityHost,
+    fi: &FederatedIdentity,
     call: &Call,
     updates: &Channel<Update>,
     mut stop: watch::Receiver<bool>,
@@ -342,7 +398,7 @@ async fn run(
     check_cancelled(&stop, &touched)?;
     let room_membership_confirmed = tokio::select! {
         _ = stop.changed() => return Err("Huddle cancelled".into()),
-        result = admit_membership(host, call) => result?,
+        result = admit_membership(host, fi, call) => result?,
     };
     check_cancelled(&stop, &touched)?;
     let room = call
@@ -356,37 +412,51 @@ async fn run(
         if creating {
             attempted_create = true;
             // Do not cancel an in-flight publication: its outcome may be uncertain.
-            publish(host, &call.community, create(&room, &call.parent), &call.viewer).await?;
+            publish(host, fi, &call.community, create(&room, &call.parent), &call.viewer).await?;
             check_cancelled(&stop, &touched)?;
             // Once the advisory might be visible, another person can join. Never
             // archive that shared room on our own failed/cancelled connection.
             advertised = true;
-            publish(host, &call.community, lifecycle(48100, &call.parent, &room), &call.viewer).await?;
+            publish(host, fi, &call.community, lifecycle(48100, &call.parent, &room), &call.viewer).await?;
         }
         check_cancelled(&stop, &touched)?;
-        let (socket, peers) = tokio::select! {
+        let mut connection = tokio::select! {
             _ = stop.changed() => return Err("Huddle cancelled".into()),
-            result = tokio::time::timeout(Duration::from_secs(15), audio::connect(host, call, &room)) => result.map_err(|_| "Huddle connection timed out")??,
+            result = tokio::time::timeout(Duration::from_secs(15), audio::connect(host, fi, call, &room)) => result.map_err(|_| "Huddle connection timed out")??,
         };
         check_cancelled(&stop, &touched)?;
+        audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
         if !creating && !room_membership_confirmed {
             // Audio can add parent-chat members directly in the database without
             // updating NIP-29 discovery. Once audio has admitted this identity,
             // self PUT_USER republishes the signed roster without changing roles.
             // Never use audio participation itself as chat write authority.
-            publish(host, &call.community, confirm_member(&room, &call.viewer), &call.viewer).await?;
+            while_audio_authorized(
+                &mut connection,
+                publish(host, fi, &call.community, confirm_member(&room, &call.viewer), &call.viewer),
+            ).await?;
             check_cancelled(&stop, &touched)?;
+            audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
             let confirmed = tokio::select! {
                 _ = stop.changed() => return Err("Huddle cancelled".into()),
-                result = admit_membership(host, call) => result?,
+                result = while_audio_authorized(&mut connection, admit_membership(host, fi, call)) => result?,
             };
+            audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
             if !confirmed {
                 return Err("Huddle chat membership could not be confirmed. Try joining again.".into());
             }
         }
         check_cancelled(&stop, &touched)?;
-        updates.send(Update::Connected { room: room.clone(), participants: peers.values().cloned().collect() }).map_err(|_| "Huddle view closed")?;
-        audio::run(socket, peers, pcm, stop.clone(), updates, &touched).await
+        audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
+        updates.send(Update::Connected { room: room.clone(), participants: connection.peers.values().cloned().collect() }).map_err(|_| "Huddle view closed")?;
+        audio::run(
+            connection,
+            pcm,
+            stop.clone(),
+            updates,
+            &touched,
+        )
+        .await
     }.await;
     // Only unadvertised creation can be rolled back without ending someone else's
     // call. Otherwise socket/TTL cleanup belongs to the existing relay.
@@ -399,7 +469,7 @@ async fn run(
             ],
             String::new(),
         );
-        let cleanup = publish(host, &call.community, archive, &call.viewer).await;
+        let cleanup = publish(host, fi, &call.community, archive, &call.viewer).await;
         if cleanup.is_err() {
             return Err(format!(
                 "{}. The temporary Huddle could not be closed; it will expire.",
@@ -455,6 +525,66 @@ pub(crate) fn huddle_pcm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Huddle membership and publication send exactly the issued assertion to
+    /// a community that requires NIP-FI, and nothing to one that does not.
+    fn authority(community: &crate::federated_identity::testing::Community) -> String {
+        community.origin.as_str().trim_end_matches('/').into()
+    }
+    async fn membership(required: bool) {
+        use crate::federated_identity::testing::{community, reply};
+        let community = community(required).await;
+        let relay = format!(r#"{{"self":"{}"}}"#, "a".repeat(64));
+        let server = community.serve(vec![reply("200 OK", &relay), reply("200 OK", "[]")]);
+        let call = Call {
+            id: uuid::Uuid::new_v4().to_string(),
+            community: authority(&community),
+            viewer: community.host.viewer().await.unwrap(),
+            parent: uuid::Uuid::new_v4().to_string(),
+            room: None,
+        };
+        let _ = admit_membership(&community.host, &community.fi, &call).await;
+        let heads = server.heads().await;
+        assert!(heads[0].starts_with("GET / "), "{}", heads[0]);
+        community.assert_uncarried(&heads[0]);
+        assert!(heads[1].starts_with("POST /query "), "{}", heads[1]);
+        community.assert_carried(&heads[1]);
+    }
+    #[tokio::test]
+    async fn membership_attaches_for_required_discovery() {
+        membership(true).await;
+    }
+    #[tokio::test]
+    async fn membership_omits_for_ordinary_discovery() {
+        membership(false).await;
+    }
+
+    async fn publication(required: bool) {
+        use crate::federated_identity::testing::{community, reply};
+        let community = community(required).await;
+        let server = community.serve(vec![reply("200 OK", "{}")]);
+        let viewer = community.host.viewer().await.unwrap();
+        let event = confirm_member(&uuid::Uuid::new_v4().to_string(), &viewer);
+        let _ = publish(
+            &community.host,
+            &community.fi,
+            &authority(&community),
+            event,
+            &viewer,
+        )
+        .await;
+        let heads = server.heads().await;
+        assert!(heads[0].starts_with("POST /events "), "{}", heads[0]);
+        community.assert_carried(&heads[0]);
+    }
+    #[tokio::test]
+    async fn publish_attaches_for_required_discovery() {
+        publication(true).await;
+    }
+    #[tokio::test]
+    async fn publish_omits_for_ordinary_discovery() {
+        publication(false).await;
+    }
     #[test]
     fn document_teardown_stops_the_owned_call() {
         let (stop, cancelled) = watch::channel(false);
@@ -490,8 +620,10 @@ mod tests {
         let updates = Channel::new(|_| panic!("Cancelled admission must not connect"));
         let (stop, cancelled) = watch::channel(false);
         let (_pcm, receiver) = mpsc::channel(1);
+        let fi = FederatedIdentity::new().unwrap();
         let pending = run(
             &host,
+            &fi,
             &call,
             &updates,
             cancelled,
@@ -575,6 +707,7 @@ mod tests {
         let viewer = "ab".repeat(32);
         let result = publish(
             &host,
+            &FederatedIdentity::new().unwrap(),
             "https://relay.test",
             confirm_member("room", &viewer),
             &viewer,

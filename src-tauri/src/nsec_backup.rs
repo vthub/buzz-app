@@ -184,18 +184,12 @@ impl NsecBackupHost {
         }
     }
     fn source_allowed(&self, source: Source) -> bool {
-        let Some(config) = self.config.as_ref() else {
-            return false;
-        };
-        match source {
-            Source::Hosted => config.service_url == "https://app.builderlab.xyz/api/goose",
-            Source::Builderlab => url::Url::parse(&config.service_url)
-                .ok()
-                .is_some_and(|url| {
-                    !buzzodz_plugins::BUILDERLAB_ORIGIN.is_empty()
-                        && url.origin().ascii_serialization() == buzzodz_plugins::BUILDERLAB_ORIGIN
-                }),
-        }
+        source_allowed_for(
+            source,
+            self.config.as_ref().as_ref(),
+            buzzodz_plugins::BUILDERLAB_ORIGIN,
+            buzzodz_plugins::BUILDERLAB_API_BASE_PATH,
+        )
     }
     fn session(
         &self,
@@ -649,6 +643,28 @@ impl NsecBackupHost {
             }
         }
         result
+    }
+}
+
+fn source_allowed_for(
+    source: Source,
+    config: Option<&Config>,
+    builderlab_origin: &str,
+    builderlab_api_base_path: &str,
+) -> bool {
+    let Some(config) = config else {
+        return false;
+    };
+    match source {
+        Source::Hosted => config.service_url == "https://app.builderlab.xyz/api/goose",
+        Source::Builderlab => url::Url::parse(&config.service_url)
+            .ok()
+            .is_some_and(|url| {
+                let path = format!("{}/", url.path().trim_end_matches('/'));
+                !builderlab_origin.is_empty()
+                    && url.origin().ascii_serialization() == builderlab_origin
+                    && path == builderlab_api_base_path
+            }),
     }
 }
 

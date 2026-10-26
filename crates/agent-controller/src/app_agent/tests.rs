@@ -451,6 +451,21 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     assert!(agent
         .http_auth(&key, "https://elsewhere.test/events", b"{}")
         .is_err());
+    for url in [
+        "https://id.test/api/v1/nip-fi/agent-grant",
+        "https://id.test/v1/nip-fi/agent-assertion",
+    ] {
+        let auth = agent.issuer_auth(&key, url, b"{}").unwrap();
+        assert_eq!(auth["tags"][0], serde_json::json!(["u", url]));
+        assert!(agent.issuer_auth(&other, url, b"{}").is_err());
+    }
+    for url in [
+        "https://id.test/v1/nip-fi/agent-grant?x",
+        "https://id.test/v1/identity/assertions",
+        agent.events_url().as_str(),
+    ] {
+        assert!(agent.issuer_auth(&key, url, b"{}").is_err());
+    }
 }
 
 #[test]

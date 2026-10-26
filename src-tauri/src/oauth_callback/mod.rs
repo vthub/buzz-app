@@ -36,6 +36,7 @@ struct Attempt {
     id: String,
     result: Option<oneshot::Receiver<CallbackResult>>,
     task: JoinHandle<()>,
+    retain_result: bool,
 }
 impl Drop for Attempt {
     fn drop(&mut self) {
@@ -63,6 +64,33 @@ impl OAuthCallbackHost {
         request: OAuthRequest,
         open: impl FnOnce(&str) -> Result<(), String>,
     ) -> Result<OAuthAttempt, String> {
+        self.begin_with_parameter(request, "redirect_uri", open)
+    }
+
+    /// NIP-FA binds its handoff secret instead of requiring echoed OAuth state.
+    /// The attempt and all callback values stay inside the native session owner.
+    pub(crate) fn begin_federated(
+        &self,
+        authorization_url: String,
+        open: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<OAuthAttempt, String> {
+        self.begin_with_parameter(
+            OAuthRequest {
+                authorization_url,
+                callback_path: format!("/federated/{}", uuid::Uuid::new_v4()),
+                use_state: Some(false),
+            },
+            "return_to",
+            open,
+        )
+    }
+
+    fn begin_with_parameter(
+        &self,
+        request: OAuthRequest,
+        callback_parameter: &str,
+        open: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<OAuthAttempt, String> {
         let mut authorization =
             url::Url::parse(&request.authorization_url).map_err(|_| "Invalid authorization URL")?;
         if authorization.scheme() != "https"
@@ -74,7 +102,7 @@ impl OAuthCallbackHost {
         }
         if authorization
             .query_pairs()
-            .any(|(name, _)| name == "state" || name == "redirect_uri")
+            .any(|(name, _)| name == "state" || name == "redirect_uri" || name == "return_to")
         {
             return Err("Invalid authorization parameters".into());
         }
@@ -93,7 +121,7 @@ impl OAuthCallbackHost {
         let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
         if current
             .as_ref()
-            .is_some_and(|attempt| !attempt.task.is_finished())
+            .is_some_and(|attempt| attempt.retain_result || !attempt.task.is_finished())
         {
             return Err("An OAuth callback is already pending".into());
         }
@@ -112,7 +140,7 @@ impl OAuthCallbackHost {
         let callback = format!("http://{authority}{path}");
         authorization
             .query_pairs_mut()
-            .append_pair("redirect_uri", &callback);
+            .append_pair(callback_parameter, &callback);
         // Native-owned, single-use CSRF correlation (RFC 8252 §8.9; RFC 9700 §2.1).
         // Disabled only for an explicit custom-protocol compatibility exception.
         let expected_state = if request.use_state.unwrap_or(true) {
@@ -139,6 +167,9 @@ impl OAuthCallbackHost {
             id: id.clone(),
             result: Some(receive),
             task,
+            // A native FI login retains its completed handoff until wait/cancel.
+            // Generic OAuth keeps its existing finished-task replacement rule.
+            retain_result: callback_parameter == "return_to",
         });
         drop(current);
         if open(authorization.as_str()).is_err() {

@@ -12,7 +12,7 @@ fn any_url(target: &str) -> Option<Url> {
 }
 
 fn stream() -> MediaStream {
-    MediaStream::serve(IdentityHost::fixture(), any_url).unwrap()
+    MediaStream::serve(IdentityHost::fixture(), None, any_url).unwrap()
 }
 
 /// The listener's authority and the request target for `url`.
@@ -139,7 +139,7 @@ async fn requests_need_the_token_the_bound_host_and_the_app_origin() {
         }
     }
     // The real validator still applies: never an arbitrary URL.
-    let strict = MediaStream::serve(IdentityHost::fixture(), media_url).unwrap();
+    let strict = MediaStream::serve(IdentityHost::fixture(), None, media_url).unwrap();
     assert_eq!(get(&strict, &url, "").await.status, 403);
 }
 

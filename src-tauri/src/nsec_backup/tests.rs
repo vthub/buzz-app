@@ -9,6 +9,69 @@ use tokio::{
     sync::{Notify, Semaphore},
 };
 
+#[test]
+fn hosted_backup_keeps_its_fixed_service_with_any_builderlab_build_target() {
+    let service = Config {
+        service_url: "https://app.builderlab.xyz/api/goose".into(),
+        namespace: "backup/staging".into(),
+    };
+    for (origin, path) in [
+        ("", ""),
+        (
+            "https://staging.builderlab.example",
+            "/deployment/api/goose/",
+        ),
+        ("https://app.builderlab.xyz", "/staging/api/goose/"),
+    ] {
+        assert!(
+            source_allowed_for(Source::Hosted, Some(&service), origin, path),
+            "Builderlab target {origin}{path} must not change the hosted service"
+        );
+    }
+    let wrong_service = Config {
+        service_url: "https://app.builderlab.xyz/staging/api/goose".into(),
+        namespace: "backup/staging".into(),
+    };
+    assert!(!source_allowed_for(
+        Source::Hosted,
+        Some(&wrong_service),
+        "https://app.builderlab.xyz",
+        "/api/goose/"
+    ));
+}
+
+#[test]
+fn builderlab_backup_requires_the_compiled_builderlab_api_path() {
+    let service = Config {
+        service_url: "https://app.builderlab.xyz/api/goose".into(),
+        namespace: "backup/staging".into(),
+    };
+    assert!(source_allowed_for(
+        Source::Builderlab,
+        Some(&service),
+        "https://app.builderlab.xyz",
+        "/api/goose/"
+    ));
+    assert!(!source_allowed_for(
+        Source::Builderlab,
+        Some(&service),
+        "https://staging.builderlab.example",
+        "/api/goose/"
+    ));
+    assert!(!source_allowed_for(
+        Source::Builderlab,
+        Some(&service),
+        "https://app.builderlab.xyz",
+        "/staging/api/goose/"
+    ));
+    assert!(!source_allowed_for(
+        Source::Builderlab,
+        Some(&service),
+        "https://app.builderlab.xyz",
+        ""
+    ));
+}
+
 fn pubkey(secret: [u8; 32]) -> String {
     PublicKey::from_secret_key(
         &Secp256k1::signing_only(),

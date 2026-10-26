@@ -164,7 +164,7 @@ mod keyring_platform {
             Error::Occupied => Failure::Occupied,
             Error::Denied => Failure::Denied,
             Error::Corrupt => Failure::Corrupt,
-            Error::Unavailable => Failure::Unavailable,
+            Error::Unavailable | Error::Changed => Failure::Unavailable,
             Error::Busy => Failure::Busy,
         }
     }

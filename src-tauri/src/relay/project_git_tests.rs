@@ -1,5 +1,5 @@
 use super::*;
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::process::Command as StdCommand;
 
 const OWNER: &str = "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB";
@@ -34,6 +34,7 @@ fn production_git(directory: &Path) -> Git {
     Git::new(
         directory,
         "Authorization: Nostr test",
+        "https://example.test/repo.git",
         Instant::now() + DEADLINE,
         STOP.get_or_init(|| watch::channel(false).0).subscribe(),
     )
@@ -399,6 +400,120 @@ fn closes(mut stream: std::net::TcpStream) -> bool {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn git_read_outlives_assertion_expiry_and_stops_on_session_retirement() {
+    use crate::federated_identity::assertion::test_live_authorization;
+    use crate::identity::IdentityHost;
+
+    let identity = IdentityHost::fixture();
+    let (fi, authorization) =
+        test_live_authorization(&identity, "wss://relay.example", Duration::from_secs(1)).await;
+    let (url, accepted) = silent_remote();
+    let read = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    let (cancel, cancelled) = oneshot::channel();
+    let lease = (fi.clone(), authorization.clone());
+    let task = tokio::spawn(async move {
+        let proof_authorization = authorization.clone();
+        serve(
+            &url,
+            &read,
+            cancelled,
+            async move {
+                Ok(git_headers(
+                    "Authorization: Nostr fixture-proof".into(),
+                    Some(&proof_authorization),
+                ))
+            },
+            Some(lease),
+        )
+        .await
+    });
+    let stream =
+        tokio::task::spawn_blocking(move || accepted.recv_timeout(Duration::from_secs(5)).unwrap())
+            .await
+            .unwrap();
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert!(
+        !task.is_finished(),
+        "assertion expiry stopped an already admitted Git read"
+    );
+    fi.close();
+    let response = task.await.unwrap().unwrap();
+    assert_eq!(response.status, CANCELLED);
+    assert!(
+        closes(stream),
+        "session retirement left a credential-bearing Git helper running"
+    );
+    drop(cancel);
+}
+
+#[tokio::test(start_paused = true)]
+async fn completed_git_result_survives_assertion_expiry_and_discovery_retirement() {
+    use crate::federated_identity::assertion::test_live_authorization;
+    use crate::identity::IdentityHost;
+
+    let identity = IdentityHost::fixture();
+    let (fi, authorization) =
+        test_live_authorization(&identity, "wss://relay.example", Duration::from_secs(1)).await;
+    let (url, accepted) = silent_remote();
+    let read = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    let (cancel, cancelled) = oneshot::channel();
+    let result_identity = identity.clone();
+    let result_fi = fi.clone();
+    let result_authorization = authorization.clone();
+    let proof_authorization = result_authorization.clone();
+    let task = tokio::spawn(async move {
+        let lease = (result_fi.clone(), result_authorization.clone());
+        let response = serve(
+            &url,
+            &read,
+            cancelled,
+            async move {
+                Ok(git_headers(
+                    "Authorization: Nostr fixture-proof".into(),
+                    Some(&proof_authorization),
+                ))
+            },
+            Some(lease),
+        )
+        .await?;
+        result_fi
+            .admit_response(&result_identity, &result_authorization, false)
+            .await?;
+        Ok::<_, String>(response)
+    });
+    let mut stream = tokio::task::spawn_blocking(move || {
+        let mut stream = accepted.recv_timeout(Duration::from_secs(5)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0; 4096];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = stream.read(&mut chunk).unwrap();
+            assert_ne!(count, 0, "Git helper closed before dispatching its read");
+            request.extend_from_slice(&chunk[..count]);
+        }
+        assert!(String::from_utf8_lossy(&request).contains("/info/refs"));
+        stream
+    })
+    .await
+    .unwrap();
+
+    tokio::time::advance(Duration::from_secs(2)).await;
+    fi.close_discovery("test-live-authorization");
+    stream
+        .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .unwrap();
+
+    let response = task.await.unwrap().unwrap();
+    assert_eq!(response.status, 502);
+    assert_eq!(response.body, failure(502).body);
+    assert!(authorization.remaining().is_zero());
+    drop(cancel);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
     let (url, accepted) = silent_remote();
@@ -406,9 +521,13 @@ async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
         let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
         let (cancel, cancelled) = oneshot::channel();
         let task = tokio::spawn(async move {
-            serve(&url, &base, cancelled, async {
-                Ok("Authorization: Nostr test".into())
-            })
+            serve(
+                &url,
+                &base,
+                cancelled,
+                async { Ok("Authorization: Nostr test".into()) },
+                None,
+            )
             .await
         });
         (cancel, task)
@@ -495,4 +614,37 @@ async fn cancelled_reads_remove_repositories_held_by_descendants() {
         !path.exists(),
         "a cancelled read left its repository behind"
     );
+}
+
+/// Git's own requests carry exactly the issued assertion to a community that
+/// requires NIP-FI, and nothing to one that does not.
+async fn federated_read(required: bool) {
+    use crate::federated_identity::testing::{community, reply};
+    let community = community(required).await;
+    let server = community.serve(vec![reply("404 Not Found", "{}")]);
+    let url = community
+        .origin
+        .join(&format!("/git/{OWNER}/repo.git"))
+        .unwrap();
+    let read = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    let (_cancel, cancelled) = oneshot::channel();
+    let _ = read_repository(
+        &community.host,
+        &community.fi,
+        url.as_str(),
+        &read,
+        cancelled,
+    )
+    .await;
+    let heads = server.heads().await;
+    assert!(heads[0].contains("/info/refs"), "{}", heads[0]);
+    community.assert_carried(&heads[0]);
+}
+#[tokio::test]
+async fn git_read_attaches_for_required_discovery() {
+    federated_read(true).await;
+}
+#[tokio::test]
+async fn git_read_omits_for_ordinary_discovery() {
+    federated_read(false).await;
 }

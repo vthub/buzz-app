@@ -110,7 +110,7 @@ impl Terminals {
         // return before an admitted spawn is accounted for and terminated, and
         // an already revoked owner cannot create another process.
         let mut state = self.lock()?;
-        if !state.owners.get(owner).is_some_and(|owner| !owner.closed) {
+        if state.owners.get(owner).is_none_or(|owner| owner.closed) {
             return Err("Terminal owner has closed".into());
         }
         if state

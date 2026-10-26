@@ -16,8 +16,8 @@ it("declares exactly the in-app link scheme so packages can claim it", () => {
 
 it("keeps the webview off the plugin's own commands; the shell owns the OS scheme", () => {
   // Rust drains OS URLs into the webview as raw strings through two main-window
-  // app commands. No deep-link capability is needed, and none is granted, so the
-  // webview cannot register or unregister schemes.
+  // app commands. The webview can subscribe to native session events but cannot
+  // register schemes or emit arbitrary Tauri events.
   const capability = JSON.parse(
     read("../../src-tauri/capabilities/default.json"),
   );
@@ -25,5 +25,8 @@ it("keeps the webview off the plugin's own commands; the shell owns the OS schem
     typeof permission === "string" ? permission : permission.identifier,
   );
   expect(identifiers.filter((id) => id.startsWith("deep-link:"))).toEqual([]);
-  expect(identifiers.filter((id) => id.startsWith("core:event:"))).toEqual([]);
+  expect(identifiers.filter((id) => id.startsWith("core:event:"))).toEqual([
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+  ]);
 });

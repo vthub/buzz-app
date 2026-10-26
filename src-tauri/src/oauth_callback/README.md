@@ -5,6 +5,12 @@ protection, and the attempt lifecycle. Plugins supply provider-specific
 authorization parameters and callback paths, handle code exchange and account
 verification, and own credentials. Outbound API requests use the host HTTP feature.
 
+Native FI additionally uses this callback owner internally with NIP-FA `return_to`
+and an S256 handoff challenge, without inventing an echoed OAuth state. Its
+native session owner performs exchange and verification; callback codes and
+handoff secrets never cross IPC. A pending callback cannot be replaced by a new
+consumer. The generic commands below retain their provider OAuth contract.
+
 ## Commands
 
 These Tauri commands are available to the main webview only. Invoke `begin` with

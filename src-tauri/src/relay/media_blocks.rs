@@ -7,6 +7,7 @@
 //! by every read and player of the same URL.
 
 use super::{buffer_media, media_spool, send_media, upstream_type};
+use crate::federated_identity::{assertion::Authorization, FederatedIdentity};
 use crate::identity::IdentityHost;
 use std::{
     collections::VecDeque,
@@ -70,12 +71,16 @@ enum Uncached {
 
 async fn fetch_block(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
     url: &Url,
     index: u64,
 ) -> std::result::Result<Arc<Block>, Uncached> {
     let start = index * BLOCK;
     let upstream = send_media(
         host,
+        fi,
+        assertion,
         url.clone(),
         Some(&format!("bytes={start}-{}", start + BLOCK - 1)),
     )
@@ -115,6 +120,27 @@ async fn fetch_block(
 /// A video sent whole is spooled to disk, up to `video_limit` bytes.
 pub(super) async fn read(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: &Url,
+    start: u64,
+    end: u64,
+    video_limit: u64,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    let assertion = super::evidence(host, fi, url).await.map_err(|_| 401u16)?;
+    let operation = read_inner(host, fi, assertion.as_ref(), url, start, end, video_limit);
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        fi.during_admitted_operation(host, assertion, false, operation)
+            .await
+            .map_err(|_| 401u16)?
+    } else {
+        operation.await
+    }
+}
+
+async fn read_inner(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
     url: &Url,
     start: u64,
     end: u64,
@@ -129,7 +155,7 @@ pub(super) async fn read(
     let (first, last) = loop {
         let index = at / BLOCK;
         let block = match slot(url, index)
-            .get_or_try_init(|| fetch_block(host, url, index))
+            .get_or_try_init(|| fetch_block(host, fi, assertion, url, index))
             .await
         {
             Ok(block) => block.clone(),

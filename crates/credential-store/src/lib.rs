@@ -2,11 +2,8 @@
 //! Password encoding matches keyring's native Windows UTF-16 / Linux UTF-8 format.
 //! Create-only writes, copies and deletes are serialized across cooperating app processes, not profiles.
 //! Locks contain no secrets; missing/locked/broken secure storage never falls back.
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use sha2::{Digest, Sha256};
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use std::fs::{self, File, OpenOptions};
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use std::path::Path;
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 use zeroize::Zeroize;
@@ -45,6 +42,7 @@ pub const fn human_store(debug: bool) -> &'static str {
 pub enum Error {
     Absent,
     Occupied,
+    Changed,
     Denied,
     Corrupt,
     Unavailable,
@@ -94,7 +92,6 @@ fn entry(service: &str, account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(service, account).map_err(error)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn lock_root() -> Result<std::path::PathBuf> {
     // Resolve the OS account, not HOME/XDG overrides, profile, worktree or temp
     // paths: all processes writing the same per-user entry must share its lock.
@@ -183,10 +180,8 @@ fn delete_entry(entry: &impl Backend, root: &Path, service: &str, account: &str)
     entry.delete()
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 struct Lock(File);
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 impl Drop for Lock {
     fn drop(&mut self) {
         // fork/dup can retain the open-file description after our descriptor
@@ -195,7 +190,6 @@ impl Drop for Lock {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn acquire(root: &Path, service: &str, account: &str) -> Result<Lock> {
     if !root.is_absolute() {
         return Err(Error::Unavailable);
@@ -391,3 +385,109 @@ fn copy(_: &str, _: &str, _: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+/// Session records have a distinct mutable owner. Human-key `add` remains create-only.
+/// Erase an indexed session without reading its contents or knowing its schema.
+#[cfg(not(test))]
+pub fn delete_session(service: &str, account: &str) -> Result<()> {
+    if !service.starts_with("dev.local.buzz.foundation.federated-session") {
+        return Err(Error::Denied);
+    }
+    let _lock = acquire(&lock_root()?, service, account)?;
+    #[cfg(target_os = "macos")]
+    return security_framework::passwords::delete_generic_password(service, account)
+        .map_err(mac_error);
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    return entry(service, account)?.delete();
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    Err(Error::Unavailable)
+}
+
+/// Session records have a distinct mutable owner. Human-key `add` remains create-only.
+/// Compare the entire previously read record under the same interprocess lock.
+#[cfg(not(test))]
+pub fn compare_session(
+    service: &str,
+    account: &str,
+    expected: Option<&[u8]>,
+    replacement: Option<&[u8]>,
+) -> Result<()> {
+    if !service.starts_with("dev.local.buzz.foundation.federated-session") {
+        return Err(Error::Denied);
+    }
+    let _lock = acquire(&lock_root()?, service, account)?;
+    let current = match read_session(service, account) {
+        Ok(value) => Some(value),
+        Err(Error::Absent) => None,
+        Err(error) => return Err(error),
+    };
+    if current.as_deref().map(|v| v.as_slice()) != expected {
+        return Err(Error::Changed);
+    }
+    session_write(service, account, replacement)
+}
+
+#[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
+pub fn read_session(service: &str, account: &str) -> Result<Zeroizing<Vec<u8>>> {
+    read(service, account)
+}
+
+#[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
+fn session_write(service: &str, account: &str, value: Option<&[u8]>) -> Result<()> {
+    let entry = entry(service, account)?;
+    match value {
+        Some(value) => entry.write(std::str::from_utf8(value).map_err(|_| Error::Corrupt)?),
+        None => match entry.delete() {
+            Err(Error::Absent) => Ok(()),
+            result => result,
+        },
+    }
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+pub fn read_session(service: &str, account: &str) -> Result<Zeroizing<Vec<u8>>> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    SecKeychain::default()
+        .map_err(mac_error)?
+        .find_generic_password(service, account)
+        .map(|(password, _)| Zeroizing::new(password.to_vec()))
+        .map_err(mac_error)
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn session_write(service: &str, account: &str, value: Option<&[u8]>) -> Result<()> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    let keychain = SecKeychain::default().map_err(mac_error)?;
+    match (keychain.find_generic_password(service, account), value) {
+        (Ok((_, mut item)), Some(value)) => item.set_password(value).map_err(mac_error),
+        (Err(error), Some(value)) if mac_error(error) == Error::Absent => keychain
+            .add_generic_password(service, account, value)
+            .map(|_| ())
+            .map_err(mac_error),
+        (Ok((_, item)), None) => {
+            item.delete();
+            match read_session(service, account) {
+                Err(Error::Absent) => Ok(()),
+                Ok(_) => Err(Error::Unavailable),
+                Err(error) => Err(error),
+            }
+        }
+        (Err(error), None) if mac_error(error) == Error::Absent => Ok(()),
+        (Err(error), _) => Err(mac_error(error)),
+    }
+}
+
+#[cfg(all(
+    not(test),
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
+))]
+pub fn read_session(_: &str, _: &str) -> Result<Zeroizing<Vec<u8>>> {
+    Err(Error::Unavailable)
+}
+#[cfg(all(
+    not(test),
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
+))]
+fn session_write(_: &str, _: &str, _: Option<&[u8]>) -> Result<()> {
+    Err(Error::Unavailable)
+}

@@ -93,6 +93,9 @@ activation when the relay says it is inaccessible or ended; the generic admissio
 response does not reveal whether it was archived. Incoming lifecycle discovery runs while a conversation header is visible. A green
 headphone offers Join for a recent remote Huddle, and clears on end, expiry, or
 conversation/community changes. Microphone capture still requires an explicit click.
+If the native authorization assertion expires during a call, audio ends and requires
+an explicit rejoin; the next join gets fresh authorization and repeats NIP-42. Huddles
+do not reconnect automatically.
 
 ## Audio settings
 

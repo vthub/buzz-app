@@ -1,6 +1,10 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
 pub(crate) mod agent;
 mod huddle;
+use crate::federated_identity::{
+    assertion::{Authorization, HEADER},
+    FederatedIdentity,
+};
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
@@ -154,16 +158,26 @@ pub(crate) struct WorkflowCursor {
 #[tauri::command]
 pub(crate) async fn relay_workflow_runs(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     id: String,
     cursor: Option<WorkflowCursor>,
 ) -> Result<RelayResponse> {
     let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
-    send(host.inner(), url, "GET", None, true, 1024 * 1024).await
+    send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "GET",
+        None,
+        true,
+        1024 * 1024,
+    )
+    .await
 }
 
 /// A Buzz git repository on this community: `<origin>/git/<owner hex>/<name>`.
-fn git_repository(community: &str, repository: &str) -> Result<Url> {
+pub(crate) fn git_repository(community: &str, repository: &str) -> Result<Url> {
     let origin = origin(community)?;
     let url = Url::parse(repository).map_err(|_| "Not a repository in this community")?;
     let segments: Vec<_> = url.path().split('/').skip(1).collect();
@@ -201,10 +215,18 @@ fn git_repository(community: &str, repository: &str) -> Result<Url> {
 #[tauri::command]
 pub(crate) async fn relay_git_authorization(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     repository: String,
 ) -> Result<String> {
     let url = git_repository(&community, &repository)?;
+    let assertion = evidence(host.inner(), Some(fi.inner()), &url).await?;
+    let proof = git_authorization(host.inner(), &url).await?;
+    admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
+    Ok(proof)
+}
+
+pub(crate) async fn git_authorization(host: &IdentityHost, url: &Url) -> Result<String> {
     let auth = host
         .sign(EventTemplate {
             kind: 27235,
@@ -606,6 +628,7 @@ pub(crate) async fn relay_sign_read_state(
 #[tauri::command]
 pub(crate) async fn relay_publish_read_state(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     event: serde_json::Value,
 ) -> Result<RelayResponse> {
@@ -615,7 +638,16 @@ pub(crate) async fn relay_publish_read_state(
         return Err("Invalid read-state event".into());
     }
     host.decode_read_state(vec![event]).await?;
-    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
+    send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
 }
 
 #[derive(Serialize)]
@@ -702,11 +734,15 @@ fn client() -> Result<&'static reqwest::Client> {
     static CLIENT: OnceLock<std::result::Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            let builder = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(30))
-                .build()
+                .timeout(Duration::from_secs(30));
+            // Tests' loopback communities use one self-signed root.
+            #[cfg(test)]
+            let builder =
+                builder.tls_certs_only([crate::federated_identity::testing::trusted_root()]);
+            builder.build()
         })
         .as_ref()
         .map_err(|_| "Relay network client is unavailable".into())
@@ -715,6 +751,7 @@ fn client() -> Result<&'static reqwest::Client> {
 #[tauri::command]
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     path: String,
     method: String,
@@ -757,6 +794,7 @@ pub(crate) async fn relay_http(
     }
     send(
         host.inner(),
+        Some(fi.inner()),
         url,
         &method,
         body,
@@ -766,8 +804,64 @@ pub(crate) async fn relay_http(
     .await
 }
 
+async fn evidence(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: &Url,
+) -> Result<Option<Authorization>> {
+    match fi {
+        Some(fi) => fi.assertion_for_relay(host, url).await.map(Some),
+        None => Ok(None),
+    }
+}
+#[derive(Clone, Copy)]
+struct AuthorizationContext<'a> {
+    fi: Option<&'a FederatedIdentity>,
+    assertion: Option<&'a Authorization>,
+}
+async fn admit(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
+) -> Result<()> {
+    if let (Some(fi), Some(assertion)) = (fi, assertion) {
+        fi.admit_authorization(host, assertion).await?;
+    }
+    Ok(())
+}
+
 async fn send(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+    method: &str,
+    body: Option<String>,
+    authenticated: bool,
+    response_limit: usize,
+) -> Result<RelayResponse> {
+    let assertion = if authenticated {
+        evidence(host, fi, &url).await?
+    } else {
+        None
+    };
+    send_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        method,
+        body,
+        authenticated,
+        response_limit,
+    )
+    .await
+}
+
+async fn send_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
     url: Url,
     method: &str,
     body: Option<String>,
@@ -821,12 +915,34 @@ async fn send(
     } else {
         request = request.header("Accept", "application/nostr+json");
     }
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
+    let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
     // Never replay a write after a transport error: it may already have reached the relay.
-    let response = request
-        .send()
-        .await
-        .map_err(|_| "Relay request could not be confirmed")?;
-    read_response(response, response_limit).await
+    let operation = async {
+        let response = request
+            .send()
+            .await
+            .map_err(|_| "Relay request could not be confirmed")?;
+        if response.status() == 401 {
+            if let (Some(fi), Some(assertion)) = (
+                authorization.fi,
+                authorization
+                    .assertion
+                    .and_then(|authorization| authorization.assertion.as_ref()),
+            ) {
+                fi.reject_assertion(assertion).await;
+            }
+        }
+        read_response(response, response_limit).await
+    };
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
+        fi.during_admitted_operation(host, assertion, mutation, operation)
+            .await?
+    } else {
+        operation.await
+    }
 }
 
 async fn read_response(mut response: reqwest::Response, limit: usize) -> Result<RelayResponse> {
@@ -1049,6 +1165,7 @@ pub(crate) async fn relay_upload_chunk<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn relay_upload<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
+    fi: tauri::State<'_, FederatedIdentity>,
     host: tauri::State<'_, IdentityHost>,
     uploads: tauri::State<'_, Uploads>,
     spools: tauri::State<'_, Spools>,
@@ -1071,10 +1188,10 @@ pub(crate) async fn relay_upload<R: tauri::Runtime>(
         let (spool, mut cancelled) = spools.take(id)?;
         process_spool(
             host.inner(),
+            Some(fi.inner()),
             url,
             spool,
-            header("x-buzz-content-type"),
-            header("x-buzz-preparation"),
+            (header("x-buzz-content-type"), header("x-buzz-preparation")),
             progress,
             &mut cancelled,
         )
@@ -1088,10 +1205,10 @@ pub(crate) async fn relay_upload<R: tauri::Runtime>(
 
 async fn process_spool(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     spool: upload_spool::Spool,
-    kind: Option<&str>,
-    preparation: Option<&str>,
+    (kind, preparation): (Option<&str>, Option<&str>),
     progress: Option<UploadProgress>,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<RelayResponse> {
@@ -1133,7 +1250,7 @@ async fn process_spool(
             .map_err(|_| "Upload hashing could not complete")??
     };
     tokio::select! {
-        result = upload_file(host, url, kind, path, hash, progress) => result,
+        result = upload_file(host, fi, url, kind, path, hash, progress) => result,
         _ = &mut *cancelled => Err("Upload cancelled".into()),
     }
 }
@@ -1205,6 +1322,32 @@ fn file_chunks(
 
 async fn upload_file(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+    kind: Option<&str>,
+    path: std::path::PathBuf,
+    (size, hash): (usize, String),
+    progress: Option<UploadProgress>,
+) -> Result<RelayResponse> {
+    let assertion = evidence(host, fi, &url).await?;
+    upload_file_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        kind,
+        path,
+        (size, hash),
+        progress,
+    )
+    .await
+}
+
+async fn upload_file_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
     url: Url,
     kind: Option<&str>,
     path: std::path::PathBuf,
@@ -1225,26 +1368,47 @@ async fn upload_file(
         vec![vec!["x".into(), hash.clone()]],
     )
     .await?;
-    let response = client()?
-        .put(url)
-        .timeout(Duration::from_secs(600))
-        .header("Authorization", auth)
-        .header("Content-Type", kind)
-        .header("X-SHA-256", hash)
-        .header(reqwest::header::CONTENT_LENGTH, size)
-        .body(reqwest::Body::wrap_stream(file_chunks(
-            file,
-            size as u64,
-            move |sent| {
-                if let Some(channel) = &progress {
-                    let _ = channel.send(sent);
-                }
-            },
-        )))
-        .send()
-        .await
-        .map_err(|_| "Upload did not finish")?;
-    read_response(response, 8192).await
+    let mut request = client()?.put(url);
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
+    let operation = async {
+        let response = request
+            .timeout(Duration::from_secs(600))
+            .header("Authorization", auth)
+            .header("Content-Type", kind)
+            .header("X-SHA-256", hash)
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::wrap_stream(file_chunks(
+                file,
+                size as u64,
+                move |sent| {
+                    if let Some(channel) = &progress {
+                        let _ = channel.send(sent);
+                    }
+                },
+            )))
+            .send()
+            .await
+            .map_err(|_| "Upload did not finish")?;
+        if response.status() == 401 {
+            if let (Some(fi), Some(assertion)) = (
+                authorization.fi,
+                authorization
+                    .assertion
+                    .and_then(|authorization| authorization.assertion.as_ref()),
+            ) {
+                fi.reject_assertion(assertion).await;
+            }
+        }
+        read_response(response, 8192).await
+    };
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
+        fi.during_admitted_operation(host, assertion, true, operation)
+            .await?
+    } else {
+        operation.await
+    }
 }
 
 /// Largest whole-file media response buffered in memory: the relay's document
@@ -1286,12 +1450,17 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
         .get_webview(ctx.webview_label())
         .and_then(|webview| webview.url().ok())
         .and_then(|url| window_origin(&url));
+    let fi = ctx
+        .app_handle()
+        .state::<FederatedIdentity>()
+        .inner()
+        .clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
             Ok((url, Some((start, end)))) => {
-                media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await
+                media_blocks::read(&host, Some(&fi), &url, start, end, WHOLE_VIDEO_MAX).await
             }
-            Ok((url, None)) => fetch_media(&host, url, None).await,
+            Ok((url, None)) => fetch_media(&host, Some(&fi), url, None).await,
             Err(status) => Err(status),
         };
         let mut response = response.unwrap_or_else(|status| {
@@ -1647,10 +1816,11 @@ fn clipboard_pixels(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
 pub(crate) async fn media_copy_image<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     source: String,
 ) -> Result<()> {
     let url = download_target(&source).ok_or("Invalid media URL")?;
-    let response = fetch_media(host.inner(), url, None)
+    let response = fetch_media(host.inner(), Some(fi.inner()), url, None)
         .await
         .map_err(|_| "Could not fetch image")?;
     if !response
@@ -1674,6 +1844,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     source: String,
     name: String,
 ) -> Result<()> {
@@ -1694,7 +1865,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
         .path()
         .download_dir()
         .map_err(|_| "Downloads unavailable")?;
-    let response = fetch_media(host.inner(), url, None)
+    let response = fetch_media(host.inner(), Some(fi.inner()), url, None)
         .await
         .map_err(|_| "Media download failed")?;
     let body = response.into_body();
@@ -1802,24 +1973,42 @@ fn media_range(value: &str) -> Option<(u64, u64)> {
 
 async fn fetch_media(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    fetch_media_bounded(host, url, range, MAX_MEDIA).await
+    fetch_media_bounded(host, fi, url, range, MAX_MEDIA).await
 }
 
 async fn fetch_media_bounded(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     range: Option<String>,
     max_bytes: usize,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    buffer_media(send_media(host, url, range.as_deref()).await?, max_bytes).await
+    let assertion = evidence(host, fi, &url).await.map_err(|_| 401u16)?;
+    let operation = async {
+        buffer_media(
+            send_media(host, fi, assertion.as_ref(), url, range.as_deref()).await?,
+            max_bytes,
+        )
+        .await
+    };
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        fi.during_admitted_operation(host, assertion, false, operation)
+            .await
+            .map_err(|_| 401u16)?
+    } else {
+        operation.await
+    }
 }
 
 /// One freshly signed upstream GET; only a 200 or 206 is returned.
 async fn send_media(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
     url: Url,
     range: Option<&str>,
 ) -> std::result::Result<reqwest::Response, u16> {
@@ -1835,8 +2024,20 @@ async fn send_media(
     if let Some(range) = range {
         request = request.header("Range", range);
     }
+    admit(host, fi, assertion).await.map_err(|_| 401u16)?;
+    if let Some(header) = assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
     let upstream = request.send().await.map_err(|_| 502u16)?;
     let status = upstream.status().as_u16();
+    if status == 401 {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion.and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
+            fi.reject_assertion(assertion).await;
+        }
+    }
     if !matches!(status, 200 | 206) {
         return Err(status);
     }

@@ -477,3 +477,48 @@ async fn launch_failure_cleans_up_but_cannot_cancel_a_replacement_after_reload()
     assert_eq!(host.0.lock().unwrap().as_ref().unwrap().id, next.id);
     host.cancel(&next.id).unwrap();
 }
+
+#[tokio::test]
+async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_its_result() {
+    let host = OAuthCallbackHost::default();
+    let mut opened = None;
+    let attempt = host.begin_federated(
+        "https://identity.example/prefix/v1/login/start?handoff_challenge=fixture&handoff_challenge_method=S256".into(),
+        |url| { opened = Some(url::Url::parse(url).unwrap()); Ok(()) },
+    ).unwrap();
+    let opened = opened.unwrap();
+    let params: Vec<_> = opened.query_pairs().into_owned().collect();
+    assert_eq!(opened.path(), "/prefix/v1/login/start");
+    assert_eq!(
+        params
+            .iter()
+            .filter(|(name, _)| name == "return_to")
+            .count(),
+        1
+    );
+    assert!(!params
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "state" | "redirect_uri" | "type" | "product")));
+    let callback = url::Url::parse(&attempt.callback_url).unwrap();
+    assert_eq!(callback.host_str(), Some("127.0.0.1"));
+    assert!(callback.port().is_some_and(|port| port > 0));
+    let html = send(
+        &callback,
+        &format!("{}?code=fixture-code", callback.path()),
+        "",
+    )
+    .await;
+    assert!(html.starts_with("HTTP/1.1 200"));
+    assert!(host
+        .begin(options("/other"), |_| panic!(
+            "A completed but unconsumed callback still owns the listener"
+        ))
+        .is_err());
+    assert_eq!(
+        host.wait(&attempt.id).await.unwrap(),
+        response(&[("code", "fixture-code")])
+    );
+    assert!(host.wait(&attempt.id).await.is_err());
+    let next = start(&host, options("/other")).unwrap();
+    host.cancel(&next.id).unwrap();
+}

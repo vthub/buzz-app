@@ -14,6 +14,8 @@ name = "buzz_foundation_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 
@@ -35,7 +37,7 @@ buzz-credential-store = { path = "../crates/credential-store" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-buzz-audio-client = { git = "https://github.com/block/buzz.git", rev = "9e7534b79d624d2dd2e50a81940fd449c8502d49" }
+buzz-audio-client = { git = "https://github.com/block/buzz.git", rev = "7e6461242aa7d98f132919dd672f7cc5f4abbba6" }
 rustls-native-certs = "0.8"
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util", "net"] }
 sha2 = "0.10"

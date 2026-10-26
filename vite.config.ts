@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { parseEnv } from "node:util";
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 import { worktreePort } from "./scripts/worktree-port.mjs";
@@ -7,8 +10,31 @@ import {
   relayOrigin,
 } from "./src/features/communities/destination.ts";
 
+function sharedBuilderlabUrl() {
+  const key = "BUZZ_BUILDERLAB_URL";
+  if (process.env[key] !== undefined) return process.env[key];
+  let local: string;
+  try {
+    local = readFileSync(resolve(".env.local"), "utf8");
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return "";
+    throw new Error("Could not read shared Builderlab build configuration.");
+  }
+  return parseEnv(local.replace(/^\uFEFF/, ""))[key] ?? "";
+}
+
 export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
+  // Native builds consume only process values and repository-root .env.local.
+  // Keep this frontend value on the same source so Vite mode files cannot
+  // select a different same-origin deployment path.
+  const builderlabUrl = sharedBuilderlabUrl();
   // The development broker is the dev server's default: it runs whenever the
   // developer has pinned their public key. Production builds (`pnpm build`,
   // `pnpm tauri build`) never load it, regardless of .env.local contents.
@@ -85,9 +111,7 @@ export default defineConfig(async ({ command, mode }) => {
         command === "serve" && env.BUZZ_DEV_NOTIFICATIONS === "0" ? "1" : "0",
       ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
-      "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
-        env.BUZZ_BUILDERLAB_URL ?? "",
-      ),
+      "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(builderlabUrl),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
         JSON.stringify(databricksHost),

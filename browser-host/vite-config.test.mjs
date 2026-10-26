@@ -140,8 +140,19 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             }
             delete process.env.BUZZ_DATABRICKS_HOST;
             // Desktop shares .env.local/process inputs with the native build.
-            // An explicit empty process value clears the frontend URL too.
-            writeFileSync('.env.local', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');
+            // Mode-specific values cannot point the renderer at another same-origin path.
+            writeFileSync('.env.local', String.fromCharCode(0xfeff) + 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');
+            writeFileSync('.env.development', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/staging');
+            writeFileSync('.env.production', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/staging');
+            for (const [command, mode] of [['serve', 'development'], ['build', 'production']]) {
+              delete process.env.BUZZ_BUILDERLAB_URL;
+              const result = await loadConfigFromFile({ command, mode }, configFile);
+              assert.equal(
+                result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'],
+                JSON.stringify('https://app.builderlab.xyz/'),
+              );
+            }
+            // Process input still overrides the shared local value, including empty.
             for (const [command, override, expected] of [
               ['serve', undefined, 'https://app.builderlab.xyz/'],
               ['build', 'https://login.example:8443/deployment/', 'https://login.example:8443/deployment/'],

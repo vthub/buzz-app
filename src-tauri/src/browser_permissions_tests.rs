@@ -10,6 +10,15 @@ fn invoke(
     command: &str,
     origin: &str,
 ) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+    invoke_with_body(webview, command, origin, InvokeBody::default())
+}
+
+fn invoke_with_body(
+    webview: &tauri::Webview<MockRuntime>,
+    command: &str,
+    origin: &str,
+    body: impl Into<InvokeBody>,
+) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
     struct BorrowedWebview<'a>(&'a tauri::Webview<MockRuntime>);
     impl AsRef<tauri::Webview<MockRuntime>> for BorrowedWebview<'_> {
         fn as_ref(&self) -> &tauri::Webview<MockRuntime> {
@@ -23,7 +32,7 @@ fn invoke(
             callback: CallbackFn(0),
             error: CallbackFn(1),
             url: origin.parse().unwrap(),
-            body: InvokeBody::default(),
+            body: body.into(),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.into(),
         },
@@ -72,6 +81,14 @@ fn native_command_permissions_isolate_webviews() {
         .unwrap();
 
     let application_commands = [
+        "federated_identity_snapshot",
+        "federated_identity_sign_in",
+        "federated_identity_cancel_sign_in",
+        "federated_identity_sign_out",
+        "relay_socket_connect",
+        "relay_socket_start",
+        "relay_socket_send",
+        "relay_socket_close",
         "identity_restore",
         "identity_import",
         "identity_legacy_available",
@@ -207,6 +224,74 @@ fn native_command_permissions_isolate_webviews() {
     } else {
         "tauri://localhost"
     };
+    // Exercise the real event plugin with the same payload shape as the frontend
+    // API. Valid requests succeed for main and fail only at the capability
+    // boundary for sibling webviews or remote origins.
+    let event = "pr869-capability-test";
+    let listen_body = serde_json::json!({
+        "event": event,
+        "target": { "kind": "Any" },
+        "handler": 42
+    });
+    let event_id = invoke_with_body(
+        &main,
+        "plugin:event|listen",
+        local_origin,
+        listen_body.clone(),
+    )
+    .expect("main should be able to register an event listener")
+    .deserialize::<u32>()
+    .expect("event plugin should return the listener id");
+    let unlisten_body = serde_json::json!({
+        "event": event,
+        "eventId": event_id
+    });
+    assert!(
+        invoke_with_body(
+            &main,
+            "plugin:event|emit",
+            local_origin,
+            serde_json::json!({ "event": event, "payload": { "source": "test" } })
+        )
+        .is_err(),
+        "main must not receive event emission permission"
+    );
+    assert!(
+        invoke_with_body(
+            &main,
+            "plugin:event|emit_to",
+            local_origin,
+            serde_json::json!({
+                "target": { "kind": "Webview", "label": "main" },
+                "event": event,
+                "payload": { "source": "test" }
+            })
+        )
+        .is_err(),
+        "main must not receive targeted event emission permission"
+    );
+
+    for (webview, origin, source) in [
+        (&guest, local_origin, "guest webview"),
+        (&main, "https://example.org", "remote content"),
+    ] {
+        assert!(
+            invoke_with_body(webview, "plugin:event|listen", origin, listen_body.clone()).is_err(),
+            "{source} must not listen to events"
+        );
+        assert!(
+            invoke_with_body(
+                webview,
+                "plugin:event|unlisten",
+                origin,
+                unlisten_body.clone()
+            )
+            .is_err(),
+            "{source} must not unregister event listeners"
+        );
+    }
+    assert!(invoke_with_body(&main, "plugin:event|unlisten", local_origin, unlisten_body).is_ok());
+
     // Window fallback belongs to trusted app UI, never a sibling or remote page.
     for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
         assert!(invoke(&guest, "plugin:window|close", origin).is_err());

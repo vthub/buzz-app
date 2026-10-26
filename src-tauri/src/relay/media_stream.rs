@@ -24,6 +24,7 @@
 //!   spool expires after `media_spool`'s idle time.
 
 use super::{media_blocks, media_spool, media_url, WHOLE_VIDEO_MAX};
+use crate::federated_identity::FederatedIdentity;
 use crate::identity::IdentityHost;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use std::{net::Ipv4Addr, sync::Arc, time::Duration};
@@ -64,12 +65,16 @@ impl Drop for MediaStream {
 }
 
 impl MediaStream {
-    pub(crate) fn start(host: IdentityHost) -> std::io::Result<Self> {
-        Self::serve(host, media_url)
+    pub(crate) fn start(host: IdentityHost, fi: FederatedIdentity) -> std::io::Result<Self> {
+        Self::serve(host, Some(fi), media_url)
     }
 
     /// `target` validates the decoded relay URL; it is `media_url` outside tests.
-    fn serve(host: IdentityHost, target: fn(&str) -> Option<Url>) -> std::io::Result<Self> {
+    fn serve(
+        host: IdentityHost,
+        fi: Option<FederatedIdentity>,
+        target: fn(&str) -> Option<Url>,
+    ) -> std::io::Result<Self> {
         // Bound synchronously, so the address is known before any page loads.
         let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
@@ -81,6 +86,7 @@ impl MediaStream {
         let stop = CancellationToken::new();
         let server = Arc::new(Server {
             host,
+            fi,
             authority,
             token,
             target,
@@ -108,6 +114,7 @@ pub(crate) fn media_stream_base<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> 
 
 struct Server {
     host: IdentityHost,
+    fi: Option<FederatedIdentity>,
     authority: String,
     token: String,
     target: fn(&str) -> Option<Url>,
@@ -305,7 +312,15 @@ async fn read(
     end: u64,
 ) -> std::result::Result<(Part, tauri::http::HeaderMap), u16> {
     let end = end.min(start.saturating_add(media_blocks::BLOCK - 1));
-    let response = media_blocks::read(&server.host, url, start, end, WHOLE_VIDEO_MAX).await?;
+    let response = media_blocks::read(
+        &server.host,
+        server.fi.as_ref(),
+        url,
+        start,
+        end,
+        WHOLE_VIDEO_MAX,
+    )
+    .await?;
     if response.status() != 206 {
         let headers = response.headers().clone();
         return Ok((Part::Whole(response), headers));

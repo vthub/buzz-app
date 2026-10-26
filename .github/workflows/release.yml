@@ -42,6 +42,7 @@ jobs:
     env:
       CI: "true"
       CARGO_TERM_COLOR: always
+      BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
     steps:
       - name: Require main and signing configuration
         env:
@@ -291,6 +292,8 @@ jobs:
   windows:
     if: github.repository == 'block/buzz-app' && (inputs.candidates || (github.ref == 'refs/heads/main' && !inputs.promote_version))
     name: Windows x64 installer (unsigned)
+    env:
+      BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
     runs-on: windows-2025
     timeout-minutes: 120
     defaults:
@@ -378,6 +381,7 @@ jobs:
         shell: bash
     env:
       APPIMAGE_EXTRACT_AND_RUN: "1"
+      BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
     steps:
       - name: Install build and packaging dependencies
         run: |

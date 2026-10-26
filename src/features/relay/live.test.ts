@@ -29,6 +29,7 @@ const isProbe = (frame: unknown[]) =>
   typeof frame[1] === "string" && frame[1].startsWith("probe-");
 class Socket {
   readyState = 1;
+  onopen?: () => void;
   onmessage?: (event: { data: string }) => Promise<void>;
   onclose?: () => void;
   onerror?: () => void;
@@ -66,6 +67,20 @@ class Socket {
   }
 }
 afterEach(() => vi.useRealTimers());
+it("keeps the browser authentication deadline measured from construction", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await vi.advanceTimersByTimeAsync(9000);
+    h.first.onopen?.();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("retrying");
+  } finally {
+    h.owner.dispose();
+  }
+});
 function setup(channels = ["a", "b"], admission = createLiveAdmission()) {
   const key = keypair(),
     sockets: Socket[] = [];
@@ -2818,6 +2833,112 @@ it("carries verified workflow attribution from live admission to notification ca
     ]);
   } finally {
     owner.dispose();
+    h.owner.dispose();
+  }
+});
+describe("policy close (1008) recovery", () => {
+  const deny = async (socket: Socket) => {
+    await socket.receive(["NOTICE", "auth-required: authorization denied"]);
+    (
+      socket.onclose as unknown as (event: {
+        code: number;
+        reason: string;
+      }) => void
+    )?.({
+      code: 1008,
+      reason: "authorization denied",
+    });
+  };
+  const status = (h: ReturnType<typeof setup>) =>
+    h.callbacks.state.mock.lastCall?.[0].status;
+  it("stops when the fresh-evidence reconnect is denied after NIP-42", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      await h.first.auth();
+      await deny(h.first);
+      expect(status(h)).toBe("retrying");
+      await vi.advanceTimersByTimeAsync(2000);
+      const second = h.sockets[1];
+      assert.exists(second);
+      // The relay checks the deny set after the upgrade and the AUTH frame.
+      await second.receive(["AUTH", "challenge"]);
+      expect(second.sent.some((entry) => entry[0] === "AUTH")).toBe(true);
+      await deny(second);
+      expect(status(h)).toBe("error");
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(h.sockets).toHaveLength(2);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it("keeps recovering ordinary expiry once each admission succeeds", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      for (let i = 0; i < 3; i++) {
+        const socket = h.sockets[i];
+        assert.exists(socket);
+        await socket.auth();
+        expect(status(h)).toBe("connected");
+        await deny(socket);
+        expect(status(h)).toBe("retrying");
+        await vi.advanceTimersByTimeAsync(2000);
+      }
+      expect(h.sockets).toHaveLength(4);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it("stops on a repeated policy close before AUTH", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    try {
+      await deny(h.first);
+      expect(status(h)).toBe("retrying");
+      await vi.advanceTimersByTimeAsync(2000);
+      const second = h.sockets[1];
+      assert.exists(second);
+      await deny(second);
+      expect(status(h)).toBe("error");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it("does not reconnect a disposed subscription", async () => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    await h.first.auth();
+    h.owner.dispose();
+    await deny(h.first);
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(h.sockets).toHaveLength(1);
+  });
+});
+it("a replaced socket's late 1008 leaves the current connection's budget", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  const policyClose = (socket: Socket) =>
+    (
+      socket.onclose as unknown as (event: {
+        code: number;
+        reason: string;
+      }) => void
+    )?.({ code: 1008, reason: "expired" });
+  try {
+    // The first socket never authenticates and is replaced after its deadline.
+    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(1000);
+    const current = h.sockets[1];
+    assert.exists(current);
+    await current.auth();
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    policyClose(h.first);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    // Ordinary expiry on the admitted socket still gets its reconnect.
+    policyClose(current);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("retrying");
+  } finally {
     h.owner.dispose();
   }
 });

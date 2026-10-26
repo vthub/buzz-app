@@ -81,9 +81,9 @@ impl Record {
             || self.namespace != config.namespace
             || self.subject != subject
             || self.pubkey != pubkey
-            || !uuid::Uuid::parse_str(&self.backup_id)
+            || uuid::Uuid::parse_str(&self.backup_id)
                 .ok()
-                .is_some_and(|id| id.to_string() == self.backup_id)
+                .is_none_or(|id| id.to_string() != self.backup_id)
         {
             return Err(FAILED.into());
         }
