@@ -40,6 +40,10 @@ import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 import { npubEncode } from "nostr-tools/nip19";
 import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
+import {
+  MENTION_RESOLVE_TIMEOUT_MS,
+  resolveSpaceMention,
+} from "./resolve-space-mention";
 import { createProfileDirectory } from "../../features/relay/profile-directory";
 import type { RelayEvent } from "../../features/relay/events";
 import { keypair, profile } from "../../features/relay/testing";
@@ -2675,6 +2679,7 @@ type DirectoryPage = {
 function spaceFixture(
   memberName: string,
   others: Record<string, string | null> = {},
+  options: { query?: string; dm?: boolean } = {},
 ) {
   const h = setup();
   h.profiles.set(h.member, { name: memberName });
@@ -2685,11 +2690,12 @@ function spaceFixture(
     channels: [
       {
         id: "parent",
-        channelType: "stream" as const,
+        channelType: options.dm ? ("dm" as const) : ("stream" as const),
         members: [h.member, ...Object.keys(others)],
       },
     ],
   };
+  const query = options.query ?? "jose";
   let finish: (value: DirectoryPage) => void = () => {};
   let fail: (error: Error) => void = () => {};
   const people = vi.fn(
@@ -2707,25 +2713,26 @@ function spaceFixture(
   const publish = vi.fn();
   const result = () =>
     publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const session = {
+    ...h.session,
+    names,
+    channels: { ...h.session.channels, list: () => list },
+    directMessages: { ...h.session.directMessages, people },
+  } as unknown as RelaySession;
+  const end = query.length + 1;
   const view = render(
     <MentionCompletion
-      session={
-        {
-          ...h.session,
-          names,
-          channels: { ...h.session.channels, list: () => list },
-          directMessages: { ...h.session.directMessages, people },
-        } as unknown as RelaySession
-      }
+      session={session}
       scope="space-test"
       channelId="parent"
-      observation={{ revision: 1, text: "@jose", start: 5, end: 5 }}
-      query={{ start: 0, end: 5, query: "jose" }}
+      observation={{ revision: 1, text: `@${query}`, start: end, end }}
+      query={{ start: 0, end, query }}
       publish={publish}
     />,
   );
   return {
     ...h,
+    session,
     people,
     result,
     finish: (page: DirectoryPage) => act(async () => finish(page)),
@@ -2920,6 +2927,253 @@ it.each([
     }
   },
 );
+const outsideNamesake = { pubkey: "e".repeat(64), name: "José" };
+it.each([
+  { case: "no match", page: { people: [], hasMore: false } },
+  {
+    case: "a namesake",
+    page: {
+      people: [{ pubkey: outsideJose, name: "Jose" }, outsideNamesake],
+      hasMore: false,
+    },
+  },
+  {
+    case: "a longer name",
+    page: {
+      people: [{ pubkey: outsideJose, name: "Jose Luis" }],
+      hasMore: false,
+    },
+  },
+  {
+    case: "more pages",
+    page: { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: true },
+  },
+  { case: "a failed search", page: "error" as const },
+])(
+  "Space may hold an outside name as pending only until the directory settles with $case",
+  async ({ page }) => {
+    const h = spaceFixture("Member");
+    try {
+      await waitFor(() =>
+        expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+      );
+      // Undecided, not declined: the search is still running.
+      expect(h.result()?.spaceId).toBeUndefined();
+      expect(h.result()?.spacePending?.name).toBe("jose");
+      await (page === "error" ? h.fail() : h.finish(page));
+      await waitFor(() => expect(h.result()?.spacePending).toBeUndefined());
+      expect(h.result()?.spaceId).toBeUndefined();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it("Space holds nothing once it can decide", async () => {
+  const h = spaceFixture("José");
+  try {
+    await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+    expect(h.result()?.spacePending).toBeUndefined();
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose" }],
+      hasMore: false,
+    });
+    await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+    expect(h.result()?.spacePending).toBeUndefined();
+  } finally {
+    h.dispose();
+  }
+});
+it.each(["jose ", "jose,", "", "jose luis"])(
+  "Space never holds %j as a pending mention",
+  async (query) => {
+    const h = spaceFixture("Member", {}, { query });
+    try {
+      await waitFor(() =>
+        expect(h.people).toHaveBeenCalledWith(query, 1, expect.anything()),
+      );
+      expect(h.result()).toBeDefined();
+      expect(h.result()?.spacePending).toBeUndefined();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it("a saved team with the name never leaves Space pending", async () => {
+  // No roster: nothing local decides, and the directory search is running.
+  const h = teamFixture(undefined, { missingRoster: true });
+  try {
+    await waitFor(() => expect(h.result()).toBeDefined());
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.result()?.spacePending).toBeUndefined();
+  } finally {
+    h.view.unmount();
+    h.library.dispose();
+  }
+});
+it("Space holds an agent's name while the Solo inventory loads, and the resolver selects it once loaded", async () => {
+  const test = setup(false);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = vi.fn(async () => {
+    await gate;
+    return {
+      definitions: [],
+      identities: [{ pubkey: test.key, name: "Aaron" }],
+    };
+  });
+  const library = createAgentLibrary(read);
+  const session = {
+    ...test.session,
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  };
+  const publish = vi.fn();
+  const result = () => publish.mock.lastCall?.[0] as CompletionResult;
+  const view = render(
+    <MentionCompletion
+      {...emptyCompletion}
+      session={session}
+      inviteAgents
+      observation={{ revision: 1, text: "@Aaron", start: 6, end: 6 }}
+      query={{ start: 0, end: 6, query: "Aaron" }}
+      publish={publish}
+    />,
+  );
+  try {
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    expect(result().spaceId).toBeUndefined();
+    expect(result().spacePending?.name).toBe("Aaron");
+    const pending = result().spacePending?.resolve(
+      new AbortController().signal,
+    );
+    await act(async () => release());
+    await expect(pending).resolves.toEqual({ pubkey: test.key, name: "Aaron" });
+    // The resolver joined the read in flight rather than starting another.
+    expect(read).toHaveBeenCalledOnce();
+    await waitFor(() => expect(result().spaceId).toBe(test.key));
+    expect(result().spacePending).toBeUndefined();
+  } finally {
+    await act(async () => release());
+    view.unmount();
+    library.dispose();
+    test.library.dispose();
+  }
+});
+const resolver = (
+  h: { session: RelaySession },
+  signal = new AbortController().signal,
+) =>
+  resolveSpaceMention(
+    h.session,
+    { channelId: "parent", selected: [] },
+    "jose",
+    signal,
+  );
+it.each([
+  {
+    case: "a unique outside name",
+    page: { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: false },
+    recipient: { pubkey: outsideJose, name: "Jose" },
+  },
+  {
+    case: "a namesake",
+    page: {
+      people: [{ pubkey: outsideJose, name: "Jose" }, outsideNamesake],
+      hasMore: false,
+    },
+    recipient: null,
+  },
+  {
+    case: "a longer name",
+    page: {
+      people: [{ pubkey: outsideJose, name: "Jose Luis" }],
+      hasMore: false,
+    },
+    recipient: null,
+  },
+  {
+    case: "more pages",
+    page: { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: true },
+    recipient: null,
+  },
+  { case: "a failed search", page: "error" as const, recipient: null },
+])(
+  "the resolver settles an outside name once the directory reports $case",
+  async ({ page, recipient }) => {
+    const h = spaceFixture("Member");
+    try {
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+      const pending = resolver(h);
+      // The chooser's read is in flight and uncached; the resolver reads at
+      // once, with no typing pause.
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
+      await (page === "error" ? h.fail() : h.finish(page));
+      await expect(pending).resolves.toEqual(recipient);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it("the resolver reads a page the chooser already settled from the shared cache", async () => {
+  const h = spaceFixture("Member");
+  try {
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose" }],
+      hasMore: false,
+    });
+    await expect(resolver(h)).resolves.toEqual({
+      pubkey: outsideJose,
+      name: "Jose",
+    });
+    expect(h.people).toHaveBeenCalledTimes(1);
+  } finally {
+    h.dispose();
+  }
+});
+it("the resolver returns a DM outsider to prose rather than promise a notification", async () => {
+  const h = spaceFixture("Member", {}, { dm: true });
+  try {
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+    const pending = resolver(h);
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose" }],
+      hasMore: false,
+    });
+    await expect(pending).resolves.toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
+it("the resolver settles to prose when its chip is gone before the directory answers", async () => {
+  const h = spaceFixture("Member");
+  try {
+    const controller = new AbortController();
+    const pending = resolver(h, controller.signal);
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
+    controller.abort();
+    await expect(pending).resolves.toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
+it("the resolver gives up at the wait bound", async () => {
+  vi.useFakeTimers();
+  const h = spaceFixture("Member");
+  try {
+    const pending = resolver(h);
+    await vi.advanceTimersByTimeAsync(MENTION_RESOLVE_TIMEOUT_MS);
+    await expect(pending).resolves.toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
 /**
  * A real profile directory, so a member read that settles or fails is evidence
  * the chooser sees. The directory search never settles: only step 1 of the
@@ -3011,6 +3265,26 @@ it("Space selects a member's name once a read finds no profile for another membe
     // Known unnamed: no name to be a namesake, and no directory wait.
     await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
     expect(h.canSpace(h.member)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+it("Space holds a member's name while another member's read is in flight, and the resolver selects it once the read settles", async () => {
+  const h = unnamedMemberFixture();
+  try {
+    await waitFor(() =>
+      expect(h.reads.map((read) => read.authors)).toEqual([[otherMember]]),
+    );
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.result()?.spacePending?.name).toBe("jose");
+    const pending = h
+      .result()
+      ?.spacePending?.resolve(new AbortController().signal);
+    await act(async () => h.reads[0]?.resolve([]));
+    // Known unnamed: the member's exact name selects without the directory.
+    await expect(pending).resolves.toEqual({ pubkey: h.member, name: "José" });
+    // The resolver joined the read in flight rather than issuing another.
+    expect(h.reads).toHaveLength(1);
   } finally {
     h.dispose();
   }

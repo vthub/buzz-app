@@ -19,6 +19,12 @@ export function mentionQuery(text: string, caret: number) {
   return { start, end: caret, query };
 }
 
+/** A query Space may hold as a pending mention: a name still being typed.
+ * Trailing space or punctuation says the user has moved on to prose. */
+export function pendingMentionQuery(query: string) {
+  return !!normalizeName(query) && !/[\s.,!?;:)\]}]$/u.test(query);
+}
+
 export function matchesMentionQuery(query: string, names: readonly string[]) {
   if (!query.includes(" ")) return true;
   const lower = foldName(query);

@@ -239,17 +239,41 @@ export type CompletionQuery = Readonly<{
   end: number;
   query: string;
 }>;
+/** A name the provider cannot decide on yet. The host may hold it as a chip
+ * with no recipient and ask `resolve` for the recipient the terminator would
+ * have selected once the provider's evidence is complete; null returns the
+ * name to prose. `resolve` is headless: the provider has unmounted by then. */
+export type CompletionPending = Readonly<{
+  name: string;
+  resolve(
+    signal: AbortSignal,
+  ): Promise<Readonly<{ pubkey: string; name: string }> | null>;
+}>;
 export type CompletionEdit =
-  | Readonly<{ text: string; mention?: never; mentions?: never }>
+  | Readonly<{
+      text: string;
+      mention?: never;
+      mentions?: never;
+      pending?: never;
+    }>
   | Readonly<{
       mention: Readonly<{ pubkey: string; name: string }>;
       text?: never;
       mentions?: never;
+      pending?: never;
     }>
   | Readonly<{
       mentions: readonly Readonly<{ pubkey: string; name: string }>[];
       text?: never;
       mention?: never;
+      pending?: never;
+    }>
+  /** Host-only: the terminator typed over an undecided name. Never a suggestion's edit. */
+  | Readonly<{
+      pending: CompletionPending;
+      text?: never;
+      mention?: never;
+      mentions?: never;
     }>;
 export type CompletionSuggestion = Readonly<{
   id: string;
@@ -267,6 +291,9 @@ export type CompletionResult = Readonly<{
   items: readonly CompletionSuggestion[];
   /** Provider-verified unique exact match across its uncapped candidate set. */
   spaceId?: string | undefined;
+  /** No `spaceId` yet only because evidence is still arriving; the terminator
+   * may hold the query as a pending mention instead of typing a literal. */
+  spacePending?: CompletionPending | undefined;
   status?: string;
   /** Optional explicit recovery. A new query or disposal revokes this action. */
   retry?: () => void;

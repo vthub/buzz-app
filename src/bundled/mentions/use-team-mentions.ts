@@ -6,9 +6,25 @@ import {
 import type { useMentionChoices } from "./use-mention-choices";
 import { mentionCandidates } from "./mention-candidates";
 import { extendsName, normalizeName } from "../../features/search/person-match";
+import type { RelaySession } from "../../features/relay/session";
 import { mentionMatch } from "./mention-ranking";
 
 const empty = { status: "unavailable", entries: [] } as const;
+type Catalog = Pick<
+  ReturnType<NonNullable<RelaySession["channelKit"]>["snapshot"]>,
+  "entries"
+>;
+/** A saved team with the same or a longer name must not auto-select a person on Space. */
+export function teamBlocksSpace(catalog: Catalog, query: string) {
+  const needle = normalizeName(query);
+  return catalog.entries.some(
+    (entry) =>
+      !entry.record.deleted &&
+      entry.record.value.type === "team" &&
+      (normalizeName(entry.record.value.name) === needle ||
+        extendsName(entry.record.value.name, needle)),
+  );
+}
 const subscribeNone = () => () => {};
 const snapshotNone = () => empty;
 
@@ -175,15 +191,11 @@ export function useTeamMentions(
       },
     );
     const names = teams.map(({ value }) => value.name);
-    const needle = normalizeName(query);
     return {
       choices,
       includeLegacy: hasTeams,
       names,
-      // A saved team with the same/longer name must not auto-select a person on Space.
-      blocksSpace: names.some(
-        (name) => normalizeName(name) === needle || extendsName(name, needle),
-      ),
+      blocksSpace: teamBlocksSpace(catalog, query),
       status:
         open && (catalog.status === "idle" || catalog.status === "loading")
           ? "Loading saved teams…"

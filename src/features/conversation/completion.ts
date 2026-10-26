@@ -142,6 +142,17 @@ export function completionResult(result: CompletionResult): CompletionResult {
     ...(typeof result.spaceId === "string" && ids.has(result.spaceId)
       ? { spaceId: result.spaceId }
       : {}),
+    ...(result.spacePending &&
+    typeof result.spacePending.name === "string" &&
+    result.spacePending.name &&
+    typeof result.spacePending.resolve === "function"
+      ? {
+          spacePending: Object.freeze({
+            name: result.spacePending.name,
+            resolve: result.spacePending.resolve,
+          }),
+        }
+      : {}),
     ...(typeof result.status === "string" ? { status: result.status } : {}),
     ...(typeof result.retry === "function" ? { retry: result.retry } : {}),
   });
