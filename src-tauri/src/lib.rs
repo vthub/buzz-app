@@ -432,6 +432,7 @@ async fn plugin_import_git(
     )
     .await
 }
+
 /// Admits a Git import's response; only a refused Add clears the preview it stored.
 async fn admit_git_result(
     fi: &federated_identity::FederatedIdentity,
@@ -1151,15 +1152,24 @@ mod tests {
             .await
             .expect("a refused check waited on the import slot")
             .unwrap();
-        assert!(check.is_err());
+        assert_eq!(
+            check.err().as_deref(),
+            Some("Federated authorization changed")
+        );
         drop(pending);
         *imports.0.lock().unwrap() = Some(prepared);
-        assert!(admit(true).await.unwrap().is_err());
+        assert_eq!(
+            admit(true).await.unwrap().err().as_deref(),
+            Some("Federated authorization changed")
+        );
         assert!(
             imports.0.lock().unwrap().is_some(),
             "a check cleared Add's preview"
         );
-        assert!(admit(false).await.unwrap().is_err());
+        assert_eq!(
+            admit(false).await.unwrap().err().as_deref(),
+            Some("Federated authorization changed")
+        );
         assert!(
             imports.0.lock().unwrap().is_none(),
             "a refused Add kept its preview"
