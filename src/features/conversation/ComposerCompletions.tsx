@@ -308,8 +308,10 @@ function OwnedCompletion({
         return false;
       }
       // A result that has just decided the terminator may not have rendered
-      // yet, so both terminator branches read the publication. A display
-      // that showed another exact match still stands: the user saw that one.
+      // yet, so both terminator branches read the publication. Space is not
+      // redirected away from an exact match the display showed: a publication
+      // that moves it to another id leaves Space literal. The displayed row
+      // is never accepted on its own; only the publication selects.
       const published = latest.current;
       if (
         event.key === terminator &&

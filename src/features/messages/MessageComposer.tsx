@@ -1196,12 +1196,11 @@ function Composer({
       valueRef.current.recipients.length < 32
         ? recipient
         : null;
-    const outcome = input.current?.settlePendingMention(id, accepted) ?? false;
-    // Held through an IME composition: the chip is still pending until the
-    // replay, so the entry stays and `settled` waits for the outcome.
-    if (outcome instanceof Promise)
-      return outcome.then((applied) => settled(id, accepted, applied));
-    settled(id, accepted, outcome);
+    // Held through an IME composition, the outcome is a promise: the chip is
+    // still pending until the replay, so the entry stays until it lands.
+    return Promise.resolve(
+      input.current?.settlePendingMention(id, accepted) ?? false,
+    ).then((applied) => settled(id, accepted, applied));
   }
   function settled(
     id: string,
