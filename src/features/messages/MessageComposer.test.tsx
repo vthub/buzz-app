@@ -37,9 +37,12 @@ import type {
   ComposerCompletionProps,
   ComposerTool,
   ComposerToolProps,
+  CompletionPending,
   CompletionResult,
   InlineRenderer,
 } from "../conversation/contracts";
+import { mentionQuery } from "../../bundled/mentions/mention-query";
+import type { MentionRecipient } from "./mention-draft";
 import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
 import type { LocalAgents } from "../agents/local";
@@ -9902,4 +9905,221 @@ it("guards automatic recipient changes using the current draft prose", () => {
   expect(h.input().value).toContain("Written draft");
   h.fill(" \n ");
   act(() => expect(replace?.([second])).toBe(true));
+});
+
+/** A mention provider the test publishes for, over the real `@` syntax. */
+function mountPendingMention() {
+  const publishes: ComposerCompletionProps["publish"][] = [];
+  function Completion({ publish }: ComposerCompletionProps) {
+    useLayoutEffect(() => {
+      publishes.push(publish);
+    }, [publish]);
+    return null;
+  }
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: Completion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+  const resolve = vi.fn<CompletionPending["resolve"]>();
+  return {
+    ...h,
+    resolve,
+    /** How many `@` queries the provider has been mounted for. */
+    queries: () => publishes.length,
+    /** Type `@name`, publish an undecided result for it, then type Space.
+     * Returns the keydown's default-prevented state inverted: false when held. */
+    hold(name: string, outcome: Promise<MentionRecipient | null>) {
+      resolve.mockImplementation(() => outcome);
+      h.fill(`@${name}`);
+      const publish = publishes.at(-1);
+      if (!publish) throw new Error("No mention query observed");
+      act(() => {
+        publish({ items: [], spacePending: { name, resolve } });
+      });
+      return fireEvent.keyDown(h.input(), { key: " " });
+    },
+    chip: (name: string) =>
+      within(h.input()).queryByRole("img", {
+        name: `Resolving mention ${name}`,
+      }),
+  };
+}
+
+it("holds an undecided name on Space, then settles it into the recipient without reopening the chooser", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    expect(h.hold("honey", outcome.promise)).toBe(false);
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    expect(h.resolve).toHaveBeenCalledOnce();
+    // The chip's `@` is not an open query: no provider mounts for "honey ".
+    const queries = h.queries();
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(1);
+    expect(h.queries()).toBe(queries);
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@Honey ",
+      [first.pubkey],
+      [],
+    );
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("returns a pending mention to prose when its recipient is not admitted at settle", async () => {
+  const h = mountPendingMention();
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("eve", outcome.promise);
+    // The destination became a Solo chat meanwhile: outsiders are not admitted.
+    Object.assign(h.session, {
+      channels: { list: () => soloList, subscribeList: () => () => {} },
+    });
+    await act(async () =>
+      outcome.resolve({ pubkey: "e".repeat(64), name: "Eve" }),
+    );
+    expect(h.input()).toHaveValue("@eve ");
+    expect(h.chip("eve")).toBeNull();
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it.each([
+  {
+    case: "the recipient",
+    recipient: first,
+    text: "@Honey ",
+    tagged: [first.pubkey],
+  },
+  { case: "prose", recipient: null, text: "@honey ", tagged: [] },
+])(
+  "sending while a mention is pending waits for it, then sends $case",
+  async ({ recipient, text, tagged }) => {
+    const h = mountPendingMention();
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+    const outcome = deferred<MentionRecipient | null>();
+    try {
+      h.hold("honey", outcome.promise);
+      h.submit();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeDisabled(),
+      );
+      expect(h.messages.send).not.toHaveBeenCalled();
+      await act(async () => outcome.resolve(recipient));
+      await waitFor(() =>
+        expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+          "channel",
+          text,
+          tagged,
+          [],
+        ),
+      );
+    } finally {
+      outcome.resolve(null);
+    }
+  },
+);
+
+it("asks about a settled outside agent before sending, like a chosen one", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: vi.fn() },
+  });
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    h.submit();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Do nothing" }));
+    await act(async () => {});
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+      "channel",
+      "@Honey ",
+      [],
+    ]);
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("removing a pending chip abandons its resolution, and redo starts it again", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const abandoned = deferred<MentionRecipient | null>();
+  const restarted = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", abandoned.promise);
+    const signal = h.resolve.mock.calls[0]?.[0];
+    act(() => h.input().undo(false));
+    expect(h.input()).toHaveValue("@honey");
+    expect(signal?.aborted).toBe(true);
+    h.resolve.mockImplementation(() => restarted.promise);
+    act(() => h.input().undo(true));
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeInTheDocument();
+    expect(h.resolve).toHaveBeenCalledTimes(2);
+    expect(h.resolve.mock.calls[1]?.[0]?.aborted).toBe(false);
+    // The abandoned resolution settling late changes nothing.
+    await act(async () => abandoned.resolve(second));
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeInTheDocument();
+    await act(async () => restarted.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    abandoned.resolve(null);
+    restarted.resolve(null);
+  }
 });

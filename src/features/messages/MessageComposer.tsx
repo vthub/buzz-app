@@ -108,6 +108,7 @@ import type { MentionPicks } from "../relay/messages";
 import type {
   ConversationExtensions,
   CompletionEdit,
+  CompletionPending,
   CompletionQuery,
   ComposerObservation,
   ComposerResource,
@@ -1121,6 +1122,15 @@ function Composer({
       }
     };
   }, [editScope]);
+  // DOM props are committed before child layout effects; closures can still
+  // carry the preceding render's enabled state during that interval.
+  const editable = () =>
+    permitted.current &&
+    !editingDisabled &&
+    !!outbox?.supports(9) &&
+    !!input.current?.isConnected &&
+    !input.current.disabled &&
+    !input.current.readOnly;
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -1128,18 +1138,8 @@ function Composer({
     terminator?: ":",
     focus = true,
   ) {
-    if (
-      !permitted.current ||
-      editingDisabled ||
-      !outbox?.supports(9) ||
-      !input.current?.isConnected ||
-      // DOM props are committed before child layout effects; closures can still
-      // carry the preceding render's enabled state during that interval.
-      input.current.disabled ||
-      input.current.readOnly ||
-      typeof text !== "string"
-    )
-      return false;
+    const field = input.current;
+    if (!editable() || !field || typeof text !== "string") return false;
     // Edits replace prose; they do not change the original notification recipients.
     if (editing.target && recipient) {
       text = editMentionText(recipient);
@@ -1156,7 +1156,7 @@ function Composer({
       return false;
     }
     completion.invalidate();
-    if (!input.current.insertText(text, recipient, range, terminator, focus)) {
+    if (!field.insertText(text, recipient, range, terminator, focus)) {
       setError("Message is too long to insert text");
       return false;
     }
@@ -1164,6 +1164,80 @@ function Composer({
     setError(undefined);
     return true;
   }
+  // A Space typed before the chooser could decide holds its name as a chip
+  // with no recipient; the provider's resolver settles it off-screen. The
+  // chip's id keys its resolver here, and the draft says which chips exist.
+  const pendingMentions = useRef(
+    new Map<
+      string,
+      {
+        resolve: CompletionPending["resolve"];
+        controller?: AbortController | undefined;
+        settled?: Promise<void> | undefined;
+      }
+    >(),
+  );
+  function settlePendingMention(
+    id: string,
+    recipient: MentionRecipient | null,
+    signal: AbortSignal,
+  ) {
+    const entry = pendingMentions.current.get(id);
+    if (!entry || signal.aborted) return;
+    pendingMentions.current.delete(id);
+    // Exactly what Tab would have inserted: admitted now, within the cap.
+    const accepted =
+      recipient &&
+      mentionAdmission(
+        session,
+        channelId,
+        agentChoices,
+        mentionRoster,
+      )(recipient.pubkey) &&
+      valueRef.current.recipients.length < 32
+        ? recipient
+        : null;
+    input.current?.settlePendingMention(id, accepted);
+    if (
+      accepted &&
+      valueRef.current.recipients.some((p) => p.pubkey === accepted.pubkey)
+    )
+      rememberMention(session, channelId, accepted.pubkey);
+  }
+  function resolvePendingMention(id: string) {
+    const entry = pendingMentions.current.get(id);
+    if (!entry) return;
+    if (!entry.controller) {
+      const controller = new AbortController();
+      entry.controller = controller;
+      entry.settled = entry.resolve(controller.signal).then(
+        (recipient) => settlePendingMention(id, recipient, controller.signal),
+        () => settlePendingMention(id, null, controller.signal),
+      );
+    }
+    return entry.settled;
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reconciles resolvers against the chips in the draft; the helpers read current refs.
+  useEffect(() => {
+    const alive = new Set(value.pending?.map((chip) => chip.id));
+    for (const [id, entry] of pendingMentions.current) {
+      if (alive.has(id)) resolvePendingMention(id);
+      else if (entry.controller) {
+        // Backspace, undo or Clear removed the chip. Redo brings it back under
+        // the same id, and this effect starts its resolution again.
+        entry.controller.abort();
+        entry.controller = undefined;
+        entry.settled = undefined;
+      }
+    }
+  }, [value.pending]);
+  useEffect(
+    () => () => {
+      for (const entry of pendingMentions.current.values())
+        entry.controller?.abort();
+    },
+    [],
+  );
   function insertMention(recipient: MentionRecipient) {
     if (
       !recipient ||
@@ -1343,6 +1417,18 @@ function Composer({
       )
         return false;
     }
+    if ("pending" in edit && edit.pending) {
+      // Edits replace prose and add no recipients, so a chip that may become
+      // one has no place there: the typed Space stays literal.
+      const field = input.current;
+      if (editing.target || !editable() || !field) return false;
+      completion.invalidate();
+      const id = field.insertPendingMention(edit.pending.name, query);
+      if (!id) return false;
+      pendingMentions.current.set(id, { resolve: edit.pending.resolve });
+      setError(undefined);
+      return true;
+    }
     if ("mentions" in edit && edit.mentions)
       return insertMentions(edit.mentions, query);
     if ("mention" in edit && edit.mention)
@@ -1472,8 +1558,12 @@ function Composer({
   const recipientHint = submission
     ? "Tag an agent to send"
     : "Tag a person or agent to send";
+  // A pending mention may yet become the recipient; sending waits for it.
   const untagged =
-    needsRecipient && !editing.target && !value.recipients.length;
+    needsRecipient &&
+    !editing.target &&
+    !value.recipients.length &&
+    !value.pending?.length;
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
@@ -1567,6 +1657,35 @@ function Composer({
       !outbox
     )
       return;
+    if (valueRef.current.pending?.length) {
+      // Enter straight after Space is the case a pending mention exists for.
+      // Wait for its recipient rather than send prose; the resolver bounds
+      // the wait, and the composer shows its sending state meanwhile.
+      const wait = new AbortController();
+      sendAttempt.current = wait;
+      setSending(true);
+      setError(undefined);
+      try {
+        await Promise.race([
+          Promise.allSettled(
+            valueRef.current.pending.map((chip) =>
+              resolvePendingMention(chip.id),
+            ),
+          ),
+          new Promise<void>((resolve) => {
+            wait.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            });
+          }),
+        ]);
+      } finally {
+        if (sendAttempt.current === wait) {
+          sendAttempt.current = null;
+          if (live.current) setSending(false);
+        }
+      }
+      if (wait.signal.aborted || !live.current || !permitted.current) return;
+    }
     if (needsRecipient && !valueRef.current.recipients.length) {
       setError(recipientHint);
       return;

@@ -91,6 +91,8 @@ export function ComposerCompletions({
     text: string;
     document?: ComposerSnapshot;
     recipients: readonly Readonly<{ start: number; end: number }>[];
+    /** Mentions still resolving; their `@` is no more an open query. */
+    pending?: readonly Readonly<{ start: number; end: number }>[] | undefined;
   }>;
   replace(
     edit: CompletionEdit,
@@ -109,7 +111,10 @@ export function ComposerCompletions({
   const match =
     observation &&
     resolved.text === observation.text &&
-    matchCompletion(providers, observation, context, resolved.recipients);
+    matchCompletion(providers, observation, context, [
+      ...resolved.recipients,
+      ...(resolved.pending ?? []),
+    ]);
   if (!match || !observation) return null;
   if (
     match.provider.pluginId === "buzz.channels" &&
@@ -265,8 +270,9 @@ function OwnedCompletion({
   useLayoutEffect(() => {
     const element = input.current;
     // Escape must still dismiss an unpublished provider without advertising a
-    // nonexistent listbox. A settled empty result leaves ordinary keys alone.
-    if (!element || (!visible && result)) return;
+    // nonexistent listbox. A settled empty result leaves ordinary keys alone;
+    // an undecided one still owns the terminator, with nothing to show yet.
+    if (!element || (!visible && result && !result.spacePending)) return;
     if (visible) {
       element.setAttribute("aria-autocomplete", "list");
       element.setAttribute("aria-haspopup", "listbox");
@@ -308,6 +314,25 @@ function OwnedCompletion({
           return true;
         }
         return false;
+      }
+      // Undecided, not declined: the provider is still gathering evidence, so
+      // the host may hold the name as a pending mention and resolve it later.
+      const published = latest.current;
+      if (
+        event.key === terminator &&
+        published?.spacePending &&
+        !published.spaceId &&
+        current.current.replace(
+          { pending: published.spacePending },
+          query,
+          observation,
+          terminator,
+        )
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        current.current.editor.invalidate();
+        return true;
       }
       if ((event.key === "ArrowDown" || event.key === "ArrowUp") && count) {
         event.preventDefault();
