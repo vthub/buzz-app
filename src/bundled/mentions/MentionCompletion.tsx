@@ -7,6 +7,7 @@ import type { ComposerSession } from "../../features/messages/composer-session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { outsideMentionDetail } from "./mention-candidates";
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
+import { continuedMention } from "./mention-ranking";
 import { resolveSpaceMention } from "./resolve-space-mention";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
@@ -184,11 +185,17 @@ export function MentionCompletion({
     // Space is undecided, not declined, only while evidence is still arriving:
     // members, names or agents loading, or the directory search waiting or
     // running. Then the host may hold the name and let the resolver apply
-    // section 5 once the choice set is known. Anything else is prose.
+    // section 5 once the choice set is known. A name already known to continue
+    // the query declines Space whatever else arrives: the next word may
+    // complete that longer name, so Space stays prose and the query open. The
+    // known set is every candidate the chooser has, not only the shown rows:
+    // members or roster, offered agents and the directory rows received so
+    // far, the same set `spaceId` is decided over. Anything else is prose.
     const undecided =
       admitted &&
       model.spaceId === undefined &&
       !teams.blocksSpace &&
+      !continuedMention(model.candidates, query.query) &&
       (model.pending || model.directory.loading) &&
       pendingMentionQuery(query.query);
     const withdraw = publish({

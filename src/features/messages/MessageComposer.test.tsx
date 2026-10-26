@@ -42,6 +42,7 @@ import type {
   InlineRenderer,
 } from "../conversation/contracts";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
+import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import type { MentionRecipient } from "./mention-draft";
 import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
@@ -10021,6 +10022,70 @@ it("holds an undecided name on Space, then settles it into the recipient without
   } finally {
     outcome.resolve(null);
   }
+});
+
+it("leaves Space literal beside a loaded longer member name and selects that name on the next Space", async () => {
+  // The real chooser over the real `@` syntax, with the directory read held:
+  // `Mira Example` continues `mira` whatever the read finds, so the first
+  // Space is prose, not a pending chip, and the query stays open for the word
+  // that completes the name.
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: MentionCompletion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+  const people = vi.fn(() => new Promise<never>(() => {}));
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, ensureList: () => {} },
+      directMessages: { people },
+    } as unknown as RelaySession,
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Mira Example" }],
+      [second.pubkey, { name: "Other Member" }],
+    ]),
+  );
+  const chip = () =>
+    within(h.input()).queryByRole("img", { name: /^Resolving mention / });
+  await h.user.type(h.input(), "@mira");
+  // The chooser has published for `mira` once its row shows.
+  await screen.findByRole("option", { name: /Mira Example/ });
+  await h.user.keyboard(" ");
+  expect(h.input()).toHaveValue("@mira ");
+  expect(chip()).toBeNull();
+  await h.user.keyboard("Example hi");
+  expect(h.input()).toHaveValue("@Mira Example hi");
+  expect(chip()).toBeNull();
+  expect(
+    within(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).getAllByRole("button"),
+  ).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "@Mira Example hi",
+    [first.pubkey],
+    [],
+  );
 });
 
 it("returns a pending mention to prose when its recipient is not admitted at settle", async () => {

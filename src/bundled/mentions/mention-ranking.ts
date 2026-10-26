@@ -1,5 +1,6 @@
 import {
   exactName,
+  extendsName,
   matchPerson,
   normalizeName,
 } from "../../features/search/person-match";
@@ -82,38 +83,54 @@ export function rankMentions(
     )
     .map((k) => k.c);
 }
+const choiceNames = (c: MentionChoice) => [...c.aliases, c.label];
+/**
+ * A known choice's name continues the query (README section 5), so no exact
+ * name can be selected. A key qualifier or generated `(agent)` suffix only
+ * tells namesakes apart, so it never continues the name. Nor does a choice's
+ * own longer name when that same choice also has the exact name: one identity
+ * is not its own namesake. Choices only arrive, never leave, so once this
+ * holds over the known set nothing that loads later can lift it: Space is
+ * declined, not pending.
+ */
+export function continuedMention(
+  choices: readonly MentionChoice[],
+  query: string,
+) {
+  const needle = normalized(query);
+  return choices.some((c) => {
+    // `Example Agent` never keeps `example` from selecting the agent that is
+    // also named `Example`.
+    if (choiceNames(c).some((name) => normalized(name) === needle))
+      return false;
+    const label =
+      c.qualifier && c.label.endsWith(` · ${c.qualifier}`)
+        ? c.label.slice(0, -(c.qualifier.length + 3))
+        : c.label;
+    // Literal names still block through aliases; generated suffixes do not.
+    const longer =
+      c.agent && c.aliases.some((name) => `${name.trim()} (agent)` === label)
+        ? c.aliases
+        : [...c.aliases, label];
+    return longer.some((name) => extendsName(name, needle));
+  });
+}
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
- * Every choice can continue the name; only choices `among` can equal it. A key
- * qualifier or generated `(agent)` suffix only tells namesakes apart, so it
- * never continues the name. Nor does a choice's own longer name when that same
- * choice also has the exact name: one identity is not its own namesake.
+ * Every choice can continue the name (`continuedMention`); only choices
+ * `among` can equal it.
  */
 export const exactMention = (
   choices: readonly MentionChoice[],
   query: string,
   among: (choice: MentionChoice) => boolean = () => true,
-) => {
-  const needle = normalized(query);
-  const names = (c: MentionChoice) => [...c.aliases, c.label];
-  return exactName(
-    choices,
-    names,
-    query,
-    (c) => c.aliases.length > 0 && among(c),
-    (c) => {
-      // `Example Agent` never keeps `example` from selecting the agent that is
-      // also named `Example`.
-      if (names(c).some((name) => normalized(name) === needle)) return [];
-      const label =
-        c.qualifier && c.label.endsWith(` · ${c.qualifier}`)
-          ? c.label.slice(0, -(c.qualifier.length + 3))
-          : c.label;
-      // Literal names still block through aliases; generated suffixes do not.
-      return c.agent &&
-        c.aliases.some((name) => `${name.trim()} (agent)` === label)
-        ? c.aliases
-        : [...c.aliases, label];
-    },
-  )?.recipient.pubkey;
-};
+) =>
+  continuedMention(choices, query)
+    ? undefined
+    : exactName(
+        choices,
+        choiceNames,
+        query,
+        (c) => c.aliases.length > 0 && among(c),
+        () => [],
+      )?.recipient.pubkey;

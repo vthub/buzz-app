@@ -2983,6 +2983,26 @@ it("Space holds nothing once it can decide", async () => {
     h.dispose();
   }
 });
+it("Space is declined, not pending, beside a loaded name that continues the query", async () => {
+  const h = spaceFixture("Mira Example", {}, { query: "mira" });
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith("mira", 1, expect.anything()),
+    );
+    await waitFor(() =>
+      expect(h.result()?.items.some((item) => item.id === h.member)).toBe(true),
+    );
+    // The read is in flight, but `Mira Example` continues `mira` whatever it
+    // finds: Space is prose now and `@mira Example ` can still select it.
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.result()?.spacePending).toBeUndefined();
+    await h.finish({ people: [], hasMore: false });
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.result()?.spacePending).toBeUndefined();
+  } finally {
+    h.dispose();
+  }
+});
 it.each(["jose ", "jose,", "", "jose luis"])(
   "Space never holds %j as a pending mention",
   async (query) => {

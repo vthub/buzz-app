@@ -399,7 +399,9 @@ selects its recipient; ambiguous names require Tab, Enter or click. While the
 chooser is still waiting on members, names, agents or a directory search, Space
 holds the name as a pending chip (a spinner in place of its `@`) and applies the
 same rule once the evidence arrives, within 8 s, or returns it to prose; sending
-waits for a pending chip. Editing a
+waits for a pending chip. A name already known to continue the query (`Mira
+Example` for `mira`) is a declined Space, not a pending one, so the next word
+can still complete it. Editing a
 selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
@@ -483,7 +485,8 @@ IME composition, code and protected literal ranges keep ordinary editing behavio
 stores only `{pubkey, name}`; qualifiers are presentation, not wire data. A Space
 the chooser cannot decide yet, because its evidence is still loading, holds the
 name as a pending chip that the plugin's headless resolver settles by the same
-rule (`resolve-space-mention.ts`); the host admits the result like any selection,
+rule (`resolve-space-mention.ts`); a known longer name declines Space outright
+rather than holding it; the host admits the result like any selection,
 and a pending chip is never stored in a draft or sent as a tag.
 
 The composer rejects already-known archived recipients (never the viewer) at

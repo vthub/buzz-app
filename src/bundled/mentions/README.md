@@ -242,8 +242,11 @@ selection becomes the recipient (checked for admission as any selection is);
 anything else, including a failed or truncated search or a bounded wait
 expiring (desktop: 8 s), returns the text to prose. A name the client has
 already declined is not pending: a trailing space or punctuation, a multi-word
-query that continues no name, or a saved team with the same or a longer name
-keeps Space a normal space. In a DM a pending name that resolves to someone
+query that continues no name, a saved team with the same or a longer name, or
+a known choice whose name continues the query (a loaded member `Mira Example`
+for `mira`) keeps Space a normal space. Such a longer name blocks whatever
+else arrives, and the next word may complete it (`@mira Example ` selects the
+member), which a chip that ended the query could not. In a DM a pending name that resolves to someone
 outside the DM returns to prose, since the chooser's "Will not be notified"
 row was never shown. Sending while a mention is pending waits for it. A
 pending mention is never a recipient or a reference (section 8).
