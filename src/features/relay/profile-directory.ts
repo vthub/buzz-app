@@ -150,7 +150,8 @@ export function createProfileDirectory(
           .then((result) => {
             if (signal.aborted) return;
             accept(result.filter((event) => authors.includes(event.pubkey)));
-            missed(authors);
+            // A page at the limit may have left out authors who do have one.
+            if (result.length < 500) missed(authors);
           })
           .finally(() => {
             for (const id of authors)

@@ -390,3 +390,28 @@ it("records identities a completed read found no profile for, until one arrives"
     directory.dispose();
   }
 });
+
+it("records no absence from a read that filled its page", async () => {
+  const other = keypair();
+  // A relay that keeps every kind 0 can fill the page from one author. The
+  // directory does not verify events, so older versions are cheap copies.
+  const head = profile(user, { name: "Mic" }, 1_700_000_500);
+  const versions = Array.from({ length: 500 }, (_, i) => ({
+    ...head,
+    id: i.toString(16).padStart(64, "0"),
+    created_at: head.created_at - i,
+  }));
+  const read = vi.fn(async () => versions);
+  const directory = createProfileDirectory({ read });
+  try {
+    await directory.ensure([user.pubkey, other.pubkey]);
+    expect(directory.queries.snapshot().get(user.pubkey)?.name).toBe("Mic");
+    expect(directory.queries.unnamed?.()).toEqual(new Set());
+    // One short of the limit is complete.
+    read.mockResolvedValueOnce(versions.slice(1));
+    await directory.ensure([other.pubkey]);
+    expect(directory.queries.unnamed?.()).toEqual(new Set([other.pubkey]));
+  } finally {
+    directory.dispose();
+  }
+});
