@@ -3010,7 +3010,7 @@ it("a saved team with the name never leaves Space pending", async () => {
     h.library.dispose();
   }
 });
-it("Space holds an agent's name while the Solo inventory loads, and the resolver selects it once loaded", async () => {
+it("Space holds an agent's name while an invite scope's inventory loads, and the resolver selects it once loaded", async () => {
   const test = setup(false);
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -3169,7 +3169,7 @@ it("the resolver settles to prose for a chip already gone, even where Space coul
     // A roster scope with an exact local match awaits nothing before it picks.
     const scope = {
       channelId: "parent",
-      roster: [{ pubkey: h.member, name: "Jose" }],
+      roster: { recipients: [{ pubkey: h.member, name: "Jose" }] },
       selected: [],
     };
     await expect(

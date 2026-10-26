@@ -9,6 +9,7 @@ import { outsideMentionDetail } from "./mention-candidates";
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
 import { resolveSpaceMention } from "./resolve-space-mention";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
+import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { avatarMedia } from "../../shared/avatar-source";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
@@ -32,14 +33,7 @@ export function MentionCompletion({
     query.query,
     JSON.stringify(["inline", scope, channelId, threadRootId, query.start]),
   );
-  const {
-    profiles,
-    agents,
-    channel,
-    list,
-    choices,
-    roster: draftRoster,
-  } = model;
+  const { profiles, agents, channel, list, choices } = model;
   const teams = useTeamMentions(
     session,
     channelId,
@@ -48,6 +42,8 @@ export function MentionCompletion({
     model,
   );
   const selected = useContext(SelectedMentionContext);
+  const roster = useContext(DraftMentionRoster);
+  const draftRoster = roster?.recipients;
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
   const parentAdmission = !!channel && channel.channelType !== "solo";
@@ -204,7 +200,7 @@ export function MentionCompletion({
               resolve: (signal: AbortSignal) =>
                 resolveSpaceMention(
                   session,
-                  { channelId, inviteAgents, roster: draftRoster, selected },
+                  { channelId, inviteAgents, roster, selected },
                   query.query,
                   signal,
                 ),
@@ -287,6 +283,7 @@ export function MentionCompletion({
     choices,
     channel,
     draftRoster,
+    roster,
     inviteAgents,
     parentAdmission,
     selected,

@@ -4,6 +4,7 @@ import {
 } from "../../features/messages/composer-session";
 import { allowsOutsideMentions } from "../../features/messages/mention-admission";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
+import type { MentionRoster } from "../../features/messages/draft-mention-roster";
 import { mentionCandidates } from "./mention-candidates";
 import { namedCandidates, spaceMention } from "./use-mention-choices";
 import { teamBlocksSpace } from "./use-team-mentions";
@@ -24,7 +25,7 @@ export const MENTION_RESOLVE_TIMEOUT_MS = 8000;
 export type SpaceMentionScope = {
   channelId: string;
   inviteAgents?: boolean | undefined;
-  roster?: readonly MentionRecipient[] | undefined;
+  roster?: MentionRoster | undefined;
   /** Recipients already in the draft take part in naming. */
   selected: readonly MentionRecipient[];
 };
@@ -66,10 +67,13 @@ export async function resolveSpaceMention(
 
 async function resolve(
   session: ComposerSession,
-  { channelId, inviteAgents, roster, selected }: SpaceMentionScope,
+  { channelId, inviteAgents, roster: draft, selected }: SpaceMentionScope,
   name: string,
   signal: AbortSignal,
 ): Promise<MentionRecipient | null> {
+  // A roster's owner says when its agents have loaded, as the inventory
+  // wait below does for a channel.
+  const roster = draft?.pending ? await draft.pending : draft?.recipients;
   const invite = !roster && !!inviteAgents;
   if (!roster) {
     session.channels.ensureList();

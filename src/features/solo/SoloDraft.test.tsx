@@ -11,6 +11,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
@@ -22,6 +23,12 @@ import { createOutbox } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
 import { attachmentDraft } from "../messages/attachment-draft";
+import { createAgentChoices } from "../agents/choices";
+import { createAgentLibrary } from "../agents/library";
+import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
+import { mentionQuery } from "../../bundled/mentions/mention-query";
+import type { ComposerCompletion } from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -1525,4 +1532,78 @@ it("keeps an edited linked draft instead of reinserting its removed source", asy
   expect(t.messages.send.mock.calls[0]?.[1]).toBe(
     "@Member agent Changed request",
   );
+});
+it("tags an agent whose name was typed with Space before the agent inventory loaded", async () => {
+  const test = setup();
+  const aaron = { pubkey: "e".repeat(64), name: "Aaron" };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const library = createAgentLibrary(async () => {
+    await gate;
+    return { definitions: [], identities: [aaron] };
+  });
+  const session = {
+    ...test.session,
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  } as unknown as RelaySession;
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "typeahead",
+      key: "buzz.mentions/typeahead",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: MentionCompletion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const onStarted = vi.fn();
+  render(
+    <SoloDraft
+      session={session}
+      scope="test"
+      onStarted={onStarted}
+      extensions={{
+        tools: none,
+        inline: none,
+        completions: { snapshot: () => completions, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  const chip = () =>
+    within(input).queryByRole("img", { name: "Resolving mention Aaron" });
+  try {
+    // Fast typing: the inventory has not answered when Space arrives.
+    await userEvent.type(input, "@Aaron hi");
+    expect(input).toHaveValue("@Aaron hi");
+    expect(chip()).toHaveAttribute("aria-busy", "true");
+    await act(async () => release());
+    await waitFor(() => expect(chip()).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+    const id = test.channelWrites.create.mock.calls[0]?.[0];
+    expect(test.channelWrites.start).toHaveBeenCalledWith(
+      id,
+      expect.any(String),
+      [aaron.pubkey],
+      undefined,
+      false,
+      undefined,
+    );
+    expect(test.messages.send).toHaveBeenCalledWith(id, "@Aaron hi", [
+      aaron.pubkey,
+    ]);
+  } finally {
+    release();
+    library.dispose();
+  }
 });

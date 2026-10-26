@@ -114,7 +114,8 @@ export function useMentionChoices(
   lifetime: string,
   open = true,
 ) {
-  const roster = useContext(DraftMentionRoster);
+  const draft = useContext(DraftMentionRoster);
+  const roster = draft?.recipients;
   const selected = useContext(SelectedMentionContext);
   const agents = useAgentChoices(session, !!invite && open);
   // The owner's agents in their other communities; the snapshot is the revision.
@@ -220,6 +221,7 @@ export function useMentionChoices(
     !channel?.members;
   const pending =
     membersPending ||
+    !!draft?.pending ||
     (!roster && !!invite && agents.pending && agents.status !== "ready");
   let rows = same ? installed.rows : undefined;
   if (!same && installed) install(undefined);
