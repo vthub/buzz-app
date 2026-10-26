@@ -422,15 +422,37 @@ async fn plugin_import_git(
         })
         .await
     };
-    if let Some(assertion) = &admitted {
-        if let Err(error) = fi.admit_response(&viewer, assertion, false).await {
-            if let Ok(Some(preview)) = &result {
-                let mut pending = imports.0.lock().map_err(|_| "Import state unavailable")?;
-                if pending
-                    .as_ref()
-                    .is_some_and(|current| current.preview.token == preview.token)
-                {
-                    *pending = None;
+    admit_git_result(
+        fi.inner(),
+        &viewer,
+        admitted.as_ref(),
+        imports.inner(),
+        check_only,
+        result,
+    )
+    .await
+}
+/// Admits a Git import's response; only a refused Add clears the preview it stored.
+async fn admit_git_result(
+    fi: &federated_identity::FederatedIdentity,
+    viewer: &IdentityHost,
+    admitted: Option<&federated_identity::assertion::Authorization>,
+    imports: &Imports,
+    check_only: Option<bool>,
+    result: Result<Option<Preview>, String>,
+) -> Result<Option<Preview>, String> {
+    if let Some(assertion) = admitted {
+        if let Err(error) = fi.admit_response(viewer, assertion, false).await {
+            // Checks own only their clone; they must never lock Add's import slot.
+            if check_only != Some(true) {
+                if let Ok(Some(preview)) = &result {
+                    let mut pending = imports.0.lock().map_err(|_| "Import state unavailable")?;
+                    if pending
+                        .as_ref()
+                        .is_some_and(|current| current.preview.token == preview.token)
+                    {
+                        *pending = None;
+                    }
                 }
             }
             return Err(error);
@@ -1082,6 +1104,65 @@ mod tests {
         assert_eq!(
             imports.0.lock().unwrap().as_ref().unwrap().preview.token,
             token
+        );
+    }
+
+    // Holding the import mutex across the check is the scenario under test.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refused_git_checks_never_wait_on_or_clear_the_import_slot() {
+        use crate::federated_identity::assertion::test_live_authorization;
+        let identity = super::IdentityHost::fixture();
+        let (fi, authorization) = test_live_authorization(
+            &identity,
+            "wss://relay.example",
+            std::time::Duration::from_secs(60),
+        )
+        .await;
+        fi.close();
+        let imports = super::Imports::default();
+        let folder = tempfile::tempdir().unwrap();
+        let prepared = super::prepare_folder(folder.path()).unwrap();
+        let preview = prepared.preview.clone();
+        let slot = imports.clone();
+        let admit = move |check_only| {
+            let (fi, identity, authorization, imports, preview) = (
+                fi.clone(),
+                identity.clone(),
+                authorization.clone(),
+                slot.clone(),
+                preview.clone(),
+            );
+            // Spawned so a check that blocks on the slot stalls a worker, not the timeout.
+            tokio::spawn(async move {
+                super::admit_git_result(
+                    &fi,
+                    &identity,
+                    Some(&authorization),
+                    &imports,
+                    Some(check_only),
+                    Ok(Some(preview)),
+                )
+                .await
+            })
+        };
+        let pending = imports.0.lock().unwrap();
+        let check = tokio::time::timeout(std::time::Duration::from_secs(5), admit(true))
+            .await
+            .expect("a refused check waited on the import slot")
+            .unwrap();
+        assert!(check.is_err());
+        drop(pending);
+        *imports.0.lock().unwrap() = Some(prepared);
+        assert!(admit(true).await.unwrap().is_err());
+        assert!(
+            imports.0.lock().unwrap().is_some(),
+            "a check cleared Add's preview"
+        );
+        assert!(admit(false).await.unwrap().is_err());
+        assert!(
+            imports.0.lock().unwrap().is_none(),
+            "a refused Add kept its preview"
         );
     }
 
