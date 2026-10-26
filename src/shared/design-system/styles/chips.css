@@ -88,7 +88,12 @@
     width: 0.75em;
     height: 0.75em;
     /* Advances nothing: the transparent `@` keeps the width, and the arc is
-       centred in its advance (Inter: 0.966em). */
+       centred in its advance. 0.966em is the `@` advance of the token font
+       (Inter); a percentage cannot replace it, since it would need absolute
+       positioning, which measures `bottom` from the trigger's content box
+       (baseline + rounded descent) rather than the baseline, so the arc
+       would sink by the descent and drift with size. A chip in another font
+       keeps the arc's height and baseline but may centre it off the `@`. */
     margin-right: -0.75em;
     left: calc((-0.966em - 0.75em) / 2);
     bottom: calc(0.5cap - 0.375em);
