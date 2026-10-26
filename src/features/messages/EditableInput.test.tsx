@@ -3074,6 +3074,23 @@ it("settles a pending chip back into plain text while the editor is read-only", 
   expect(h.draft().recipients).toEqual([]);
   expect(h.input.querySelector("[data-source]")).toBeNull();
 });
+it("holds a settle that lands during a composition until the composition ends", () => {
+  const h = mount("hi @example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
+  });
+  act(() => fireEvent.compositionStart(h.input));
+  act(() => expect(h.input.settlePendingMention(id, example)).toBe(true));
+  expect(h.input).toHaveValue("hi @example ");
+  expect(pendingChip(h)).toHaveTextContent("@example");
+  expect(h.draft().recipients).toEqual([]);
+  act(() => fireEvent.compositionEnd(h.input));
+  expect(h.input).toHaveValue("hi @Example Agent ");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.draft().recipients).toEqual([{ ...example, start: 3, end: 17 }]);
+  expect(pendingChip(h)).toBeNull();
+});
 it("keeps the typed text when the recipient's name would overrun the limit", () => {
   const h = mount("@example", { maxLength: 12 });
   let id = "";
