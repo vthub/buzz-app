@@ -769,7 +769,14 @@ export function serve({
       // leaves its runs to it. Opening again says the agent is open there.
       const opened = open(agent, () => {
         forget();
-        void opened.then(shut, () => undefined);
+        void opened
+          .then(shut, () => undefined)
+          .catch((error) =>
+            console.error(
+              "Pi could not close after losing storage custody",
+              error,
+            ),
+          );
       });
       started = opened;
       failed.delete(agent);
@@ -1379,7 +1386,9 @@ export function serve({
       opened.closing = (async () => {
         for (const { stream } of opened.watched.values()) await stream.stop();
         await opened.harness.close(context);
-        await opened.release();
+        // A compromised lock may already be released. Native execution has
+        // ended above; releasing ownership is cleanup, not its acknowledgement.
+        await opened.release().catch(() => undefined);
       })();
     await opened.closing;
   }
@@ -1399,7 +1408,7 @@ export function serve({
 
   let stopping;
   const stop = () => {
-    stopping ??= Promise.all(
+    stopping ??= Promise.allSettled(
       [...agents.values()].map((opening) =>
         opening.then(shut, () => undefined),
       ),

@@ -69,7 +69,11 @@ jobs:
       - name: Real Pi tools and recovery
         env:
           PI_DEPS: ${{ github.workspace }}/src/bundled/pi/deps
-        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/protection/vitest.json evidence=test-results/protection/timing.json title="Protected Pi" -- ./bin/pnpm exec vitest run src/bundled/pi/host.live.test.ts src/bundled/pi/protection.live.test.ts --reporter=default --reporter=json --outputFile=test-results/protection/vitest.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/protection/vitest.json evidence=test-results/protection/timing.json title="Protected Pi" -- ./bin/pnpm exec vitest run src/bundled/pi/protection.live.test.ts --reporter=default --reporter=json --outputFile=test-results/protection/vitest.json
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: agent-protection
+          save-if: ${{ github.event_name == 'push' }}
       - name: Native approval-state containment
         run: ./bin/cargo test --manifest-path src-tauri/Cargo.toml host_process::protection --lib
       - name: Protection test evidence

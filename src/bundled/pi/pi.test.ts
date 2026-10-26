@@ -223,6 +223,8 @@ it("isolates protected agents, contains their runtime code and rejects crossed n
     if (!worker) throw new Error("Missing protected worker");
     expect(worker.options.args?.[0]).toContain("--disable-sigusr1");
     expect(worker.options.env).toMatchObject({
+      BASH_ENV: null,
+      ENV: null,
       NODE_OPTIONS: null,
       NODE_PATH: null,
       DYLD_INSERT_LIBRARIES: null,
