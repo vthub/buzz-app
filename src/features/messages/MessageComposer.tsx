@@ -1680,8 +1680,10 @@ function Composer({
       return;
     if (valueRef.current.pending?.length) {
       // Enter straight after Space is the case a pending mention exists for.
-      // Wait for its recipient rather than send prose; the resolver bounds
-      // the wait, and the composer shows its sending state meanwhile.
+      // Wait for its recipient rather than send prose; the composer shows
+      // its sending state meanwhile. The wait is bounded by the resolver
+      // plus an IME composition that was already open when Send was clicked,
+      // since a settle landing under it is held until the composition ends.
       const wait = new AbortController();
       sendAttempt.current = wait;
       setSending(true);

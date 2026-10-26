@@ -736,8 +736,12 @@ export function EditableInput({
       // A document change under a composition can drop or commit it early,
       // and this runs from a promise at any time. Hold it until compositionend
       // and answer with the replay's outcome, so the host does not treat a
-      // chip that is still in the draft as settled.
-      if (composing.current || editor.composing)
+      // chip that is still in the draft as settled. Only React's flag decides:
+      // the event that clears it is the one that replays, while ProseMirror's
+      // `composing` stays set after a composition that ended while the view
+      // was not editable (a Send under the IME), and a settle held on it
+      // would wait for a compositionend that never comes.
+      if (composing.current)
         return new Promise((resolve) => {
           heldSettles.current.push({ id, recipient, resolve });
         });
@@ -1919,9 +1923,9 @@ export function EditableInput({
     api.current = {
       settleHeld() {
         // ProseMirror skips its own compositionend handler while the view is
-        // not editable, as during a send, and leaves `composing` set until the
-        // next click. The composition has ended all the same, so the replay
-        // applies without that guard.
+        // not editable, as during a send, and leaves its `composing` set until
+        // the next click. The composition has ended all the same, so the
+        // replay, like the hold above, does not consult that flag.
         for (const held of heldSettles.current.splice(0))
           held.resolve(applySettle(held.id, held.recipient));
       },

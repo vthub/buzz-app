@@ -10221,6 +10221,41 @@ it("waits for a settle held through a composition before sending, then sends and
   }
 });
 
+it("settles a resolution landing after the composition ended under a send, and sends the recipient", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    act(() => fireEvent.compositionStart(h.input()));
+    h.submit();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled(),
+    );
+    // The IME commits while the send has the editor read-only: ProseMirror
+    // skips its own compositionend there and keeps its `composing` flag, so
+    // only the React flag says the composition is over. The resolution lands
+    // after that, and nothing else will come to replay a held settle.
+    await act(async () => fireEvent.compositionEnd(h.input()));
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => outcome.resolve(first));
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "@Honey ",
+        [first.pubkey],
+        [],
+      ),
+    );
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
 it("keeps the resolver of a chip gone when its held settle replays, and settles nothing", async () => {
   const h = mountPendingMention();
   h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
