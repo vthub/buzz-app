@@ -134,6 +134,12 @@ function mount(
   act(() => {
     input.focus();
     input.setSelectionRange(text.length, text.length);
+    // jsdom's focus() collapses the selection onto the focused element after
+    // its focus events, where a browser keeps the caret the editor placed, and
+    // reports that in a later task; ProseMirror puts its caret back on that
+    // selectionchange. Deliver it now: an empty draft moves no selection above,
+    // so a key typed before the task would land outside the paragraph.
+    document.dispatchEvent(new Event("selectionchange"));
   });
   return {
     input,
@@ -144,6 +150,16 @@ function mount(
     formats: () => formats,
   };
 }
+
+it("types the first character into the empty paragraph with no task between focus and the key", async () => {
+  const h = mount();
+  // The ordering a loaded runner produces: user-event's wait before the key
+  // fires before jsdom's queued selectionchange. With no delay, nothing runs
+  // between mount and the keystroke at all.
+  await userEvent.setup({ delay: null }).keyboard("`");
+  expect(h.input.innerHTML).toBe("<p>`</p>");
+  expect(h.draft().text).toBe("`");
+});
 
 it("refuses a closing-colon conversion when its literal undo source exceeds the limit", () => {
   const h = mount(":-1", { maxLength: 3 });
