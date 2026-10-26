@@ -2326,10 +2326,14 @@ it("drops its events while another copy of the app holds the agent, and runs onc
     type: "mention",
     event: second,
   });
-  // When the claim itself fails, it answers rather than stay silent.
+  // Uncertain native custody cannot establish the current protection revision.
+  native.claim.mockClear();
   native.claim.mockRejectedValue(new Error("unreadable"));
   emit({ events: [event("3", { tags: [["p", bot]] })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalled());
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  native.claim.mockResolvedValue(true);
 });
 
 it.each([false, new Error("Custody unavailable")])(
@@ -9010,7 +9014,7 @@ describe("Attention plugin sources", () => {
         },
       });
       await service.create({ type: "example/echo", name: "Echo" });
-      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
       await service.save(bot, {
         attentionEnabled: true,
         attention: {
@@ -9081,7 +9085,7 @@ describe("Attention plugin sources", () => {
       },
     });
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, {
       attentionEnabled: true,
       attention: {
@@ -9140,7 +9144,7 @@ describe("Attention plugin sources", () => {
       },
     });
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() =>
       expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
@@ -9173,7 +9177,7 @@ describe("Attention plugin sources", () => {
     active = true;
     for (const listener of listeners) listener();
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(1));
     active = false;
@@ -9207,7 +9211,7 @@ describe("Attention plugin sources", () => {
     });
     plugin.agents.addAttentionSource({ id: "command", run: produce });
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(1));
     active = false;
@@ -9243,7 +9247,7 @@ describe("Attention plugin sources", () => {
       },
     });
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(input).toBeDefined());
     input?.emit("CI failed");
@@ -9276,7 +9280,7 @@ describe("Attention plugin sources", () => {
         },
       });
       await service.create({ type: "example/echo", name: "Echo" });
-      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
       await service.save(bot, { attentionEnabled: true, attention: watches });
       try {
         await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
@@ -9333,7 +9337,7 @@ describe("Attention plugin sources", () => {
       );
       plugin.agents.addAttentionSource({ id: "command", run: produce });
       await service.create({ type: "example/echo", name: "Echo" });
-      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
       await service.save(bot, { attentionEnabled: true, attention: watches });
       await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
       await settle();
@@ -9374,7 +9378,7 @@ describe("Attention plugin sources", () => {
       },
     });
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(emitSource).toBeDefined());
     emitSource?.("  \n ");
@@ -9398,7 +9402,7 @@ describe("Attention plugin sources", () => {
     const produce = vi.fn(async () => {});
     reloaded.plugin.agents.addAttentionSource({ id: "command", run: produce });
     await vi.waitFor(() =>
-      expect(reloaded.native.claim).toHaveBeenCalledWith(bot),
+      expect(reloaded.native.claim).toHaveBeenCalledWith(bot, 0),
     );
     await settle();
     expect(reloaded.service.find(bot)?.attention["watch/pr"]).toBeUndefined();
@@ -10535,7 +10539,7 @@ it("keeps classifying after source completion storage fails", async () => {
     },
   });
   await service.create({ type: "example/echo", name: "Echo" });
-  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
   const classifier = {
     questions: {
       deploy: { question: "Is this a failed build?", threshold: 0.5 },
@@ -10843,7 +10847,7 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
     apply({ agents: consumer.agents });
     try {
       await service.create({ type: "example/echo", name: "Echo" });
-      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
       await service.save(bot, {
         attentionEnabled: true,
         attention: {
@@ -10942,7 +10946,7 @@ it.each(["Attention turns off", "the community reconnects"])(
       pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
     });
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     const controller = new AbortController();
     expect(spawn).not.toHaveBeenCalled();
     await sourceCommand(service, consumer, { signal: controller.signal });
@@ -11929,6 +11933,7 @@ it("refuses fresh work when native custody rejects a stale protection revision",
   await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalled());
   await settle();
   expect(f.run).not.toHaveBeenCalled();
+  f.native.claim.mockResolvedValue(true);
 });
 
 it("waits for native sessions to retire before saving a protection binding and invalidates old handles", async () => {
@@ -12007,4 +12012,34 @@ it("does not save protection when native retirement fails, including a retried S
       f.plugin.agentProtection.saveAgent(bot, 0, {}),
     ).rejects.toThrow("did not close");
   expect(native.setProtection).not.toHaveBeenCalled();
+});
+
+it("refuses external Attention commands for a protected agent before process or MCP launch", async () => {
+  const f = await setup({
+    identities: [
+      {
+        ...echo,
+        protection: { provider: "example", policy: {} },
+        protectionRevision: 1,
+      },
+    ],
+    protection: true,
+  });
+  const spawn = vi.fn();
+  const serveMcp = vi.fn();
+  f.ctx.provide("host", {
+    spawn,
+    serveMcp,
+  } as unknown as import("../host/service").Host);
+  const consumer = f.ctx.extend({
+    pluginOwner: { id: "consumer", revision: "one" },
+  });
+  await expect(
+    sourceCommand(f.service, consumer, {
+      signal: new AbortController().signal,
+      channel,
+    }),
+  ).rejects.toThrow("Protected agents cannot run external Attention commands");
+  expect(spawn).not.toHaveBeenCalled();
+  expect(serveMcp).not.toHaveBeenCalled();
 });

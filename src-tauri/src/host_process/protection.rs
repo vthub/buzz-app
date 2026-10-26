@@ -103,7 +103,7 @@ mod tests {
             read_only_paths: vec![],
             hidden_paths: vec![private],
         }
-        .profile(&[controls.clone()])
+        .profile(std::slice::from_ref(&controls))
         .unwrap();
         let run = |script: &str, path: &Path| {
             std::process::Command::new("/usr/bin/sandbox-exec")
