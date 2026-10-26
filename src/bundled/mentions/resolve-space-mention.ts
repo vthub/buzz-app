@@ -41,11 +41,11 @@ export async function resolveSpaceMention(
   name: string,
   signal: AbortSignal,
 ): Promise<MentionRecipient | null> {
+  if (signal.aborted) return null;
   const controller = new AbortController();
   const abort = () => controller.abort();
   const timer = setTimeout(abort, MENTION_RESOLVE_TIMEOUT_MS);
-  if (signal.aborted) abort();
-  else signal.addEventListener("abort", abort, { once: true });
+  signal.addEventListener("abort", abort, { once: true });
   try {
     // The bound holds even over a read that ignores its signal.
     return await Promise.race([

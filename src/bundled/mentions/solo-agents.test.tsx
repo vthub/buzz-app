@@ -3163,6 +3163,30 @@ it("the resolver settles to prose when its chip is gone before the directory ans
     h.dispose();
   }
 });
+it("the resolver settles to prose for a chip already gone, even where Space could decide at once", async () => {
+  const h = spaceFixture("Jose");
+  try {
+    // A roster scope with an exact local match awaits nothing before it picks.
+    const scope = {
+      channelId: "parent",
+      roster: [{ pubkey: h.member, name: "Jose" }],
+      selected: [],
+    };
+    await expect(
+      resolveSpaceMention(h.session, scope, "jose", AbortSignal.abort()),
+    ).resolves.toBeNull();
+    await expect(
+      resolveSpaceMention(
+        h.session,
+        scope,
+        "jose",
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ pubkey: h.member, name: "Jose" });
+  } finally {
+    h.dispose();
+  }
+});
 it("the resolver gives up at the wait bound", async () => {
   vi.useFakeTimers();
   const h = spaceFixture("Member");
