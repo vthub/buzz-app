@@ -255,8 +255,9 @@ function OwnedCompletion({
     }
     // Publication is synchronous; React may still be displaying the previous
     // result. Keep the user's chosen ID, but use only its current evidence/edit.
-    const item = published.items.find((item) => item.id === items[index]?.id);
-    if (key === terminator && item?.id !== published.spaceId) return false;
+    // The terminator names its own item, which that display may not have yet.
+    const id = key === terminator ? published.spaceId : items[index]?.id;
+    const item = published.items.find((item) => item.id === id);
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
     const accepted = current.current.replace(
       item.edit,
@@ -306,9 +307,17 @@ function OwnedCompletion({
         }
         return false;
       }
-      if (event.key === terminator && result?.spaceId) {
-        const exact = items.findIndex((item) => item.id === result.spaceId);
-        if (accept(exact, terminator)) {
+      // A result that has just decided the terminator may not have rendered
+      // yet, so both terminator branches read the publication. A display
+      // that showed another exact match still stands: the user saw that one.
+      const published = latest.current;
+      if (
+        event.key === terminator &&
+        published?.spaceId &&
+        (!result?.spaceId || result.spaceId === published.spaceId)
+      ) {
+        // Selected by ID, so no displayed row is needed.
+        if (accept(-1, terminator)) {
           event.preventDefault();
           event.stopPropagation();
           return true;
@@ -317,7 +326,6 @@ function OwnedCompletion({
       }
       // Undecided, not declined: the provider is still gathering evidence, so
       // the host may hold the name as a pending mention and resolve it later.
-      const published = latest.current;
       if (
         event.key === terminator &&
         published?.spacePending &&

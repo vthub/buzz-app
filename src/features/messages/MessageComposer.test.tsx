@@ -923,6 +923,29 @@ it.each(["click", "Enter", "Tab", " "])(
   },
 );
 
+it("selects the exact match on Space from a publication React has not rendered yet", () => {
+  const h = mount();
+  const input = h.input();
+  input.focus();
+  h.fill("!search");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  const chosen = { id: "chosen", label: "Chosen", edit: { text: "chosen" } };
+  act(() => {
+    publish({ items: [chosen] });
+  });
+  expect(screen.getByRole("option", { name: "Chosen" })).toBeVisible();
+  act(() => {
+    // The provider decides Space on the keystroke that completed the name,
+    // and a fast Space arrives before React commits that publication.
+    publish({ items: [chosen], spaceId: chosen.id });
+    expect(fireEvent.keyDown(input, { key: " " })).toBe(false);
+  });
+  expect(input).toHaveValue("chosen ");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it.each(["click", "Enter", "Tab"])(
   "rejects withdrawn or ineligible refreshed completions via %s without sending",
   (key) => {
