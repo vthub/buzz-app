@@ -1263,7 +1263,11 @@ function Composer({
     if (!entry.controller) {
       const controller = new AbortController();
       entry.controller = controller;
-      entry.settled = resolveChip(id, entry.resolve, controller.signal);
+      entry.settled = resolveChip(
+        id,
+        (s) => bounded(entry.resolve, s),
+        controller.signal,
+      );
     }
     return entry.settled;
   }
@@ -1291,11 +1295,12 @@ function Composer({
       return resolveChip(id, (s) => bounded(next.resolve, s), signal);
     return settlePendingMention(id, null, signal);
   }
-  /** `resolve` held to `MENTION_RESOLVE_TIMEOUT_MS`, the bound a provider
-   * gives the first resolution. The bundled resolver answers a chained
-   * resolve at once over the page it already read, but the contract lets one
-   * do I/O and nothing else times it. Expiry is null, prose, as the
-   * resolver's own bound is. */
+  /** `resolve` held to `MENTION_RESOLVE_TIMEOUT_MS`. The contract does not
+   * ask a provider to time itself, so the host bounds every link: the first
+   * resolution and each longer name a chip extends into. The bundled resolver
+   * races its first resolution against the same constant, redundant under
+   * this but harmless, and answers a chained resolve at once over the page it
+   * already read. Expiry is null, prose, as the resolver's own bound is. */
   function bounded(
     resolve: CompletionPending["resolve"],
     signal: AbortSignal,
@@ -1774,11 +1779,10 @@ function Composer({
     if (valueRef.current.pending?.length) {
       // Enter straight after Space is the case a pending mention exists for.
       // Wait for its recipient rather than send prose; the composer shows
-      // its sending state meanwhile. The wait is bounded: the provider holds
-      // its resolution to `MENTION_RESOLVE_TIMEOUT_MS`, and `resolveChip`
-      // holds each longer name a chip extends into to the same bound (the
-      // bundled resolver answers those at once over the page it already
-      // read, but the contract lets a chained resolve do I/O); plus an IME
+      // its sending state meanwhile. The wait is bounded: `resolveChip`
+      // holds each link of a resolution, the first and each longer name the
+      // chip extends into, to `MENTION_RESOLVE_TIMEOUT_MS` (the contract
+      // lets a provider's resolve do I/O without timing itself); plus an IME
       // composition that was already open when Send was clicked, since a
       // settle landing under it is held until the composition ends.
       const wait = new AbortController();

@@ -41,7 +41,11 @@ function remember(session: ComposerSession, query: string, page: Page) {
  * already holds every match for `mira e`, `mira exam` and `mira example`;
  * `derive` filters it to the longer query. A truncated page may have left a
  * match out, and an exact key is an author lookup that no name prefix
- * answers, so neither derives.
+ * answers, so neither derives. Nor does the listing read for an empty query:
+ * it is a plain profile read, not a name search, and once complete (a
+ * community with fewer than 15 profiles) it is a prefix of every query, so it
+ * would answer each name search for the session and hide a member who joins
+ * or renames after it.
  */
 function prefixPage(session: ComposerSession, query: string) {
   const queries = pages.get(session);
@@ -49,6 +53,7 @@ function prefixPage(session: ComposerSession, query: string) {
   let best: [string, Page] | undefined;
   for (const [key, page] of queries)
     if (
+      key.trim().length > 0 &&
       !page.more &&
       key.length < query.length &&
       query.startsWith(key) &&
@@ -87,16 +92,18 @@ const refutedPage: Page = { people: empty, more: false };
  * The first page for `query`: the shared cache, a complete cached page for a
  * prefix of it, or one relay read that fills the cache. The chooser and the
  * pending-mention resolver both read through here, so a page either has found
- * is the other's cache hit.
+ * is the other's cache hit. `fresh` skips the prefix page: a retry asked for
+ * a read, and a derived page is not cached, so the chooser could not show it.
  */
 export async function fetchMentionDirectoryPage(
   session: ComposerSession,
   query: string,
   signal: AbortSignal,
+  { fresh = false } = {},
 ): Promise<Page> {
   const hit = cached(session, query);
   if (hit) return hit;
-  const source = prefixPage(session, query);
+  const source = fresh ? undefined : prefixPage(session, query);
   if (source) return derive(source, query);
   exhausted.delete(session);
   const { people, hasMore } = await session.directMessages.people(
@@ -176,7 +183,9 @@ export function useMentionDirectory(
     const controller = new AbortController();
     const current = { session, query, attempt, lifetime };
     const timer = setTimeout(() => {
-      void fetchMentionDirectoryPage(session, query, controller.signal).then(
+      void fetchMentionDirectoryPage(session, query, controller.signal, {
+        fresh: attempt > 0,
+      }).then(
         (page) => {
           if (controller.signal.aborted) return;
           // A non-empty page is now cached; `own.page` keeps an empty one.

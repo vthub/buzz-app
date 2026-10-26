@@ -287,8 +287,9 @@ These rules keep a row from moving under the user's pointer or keyboard.
   A client MAY answer such a longer query from that page, filtered by section 3,
   with no search and no typing pause; the directory is then settled for it
   (section 5). A search that reported more pages, or failed, answers nothing
-  beyond its own query, and an exact 64-hex key is never answered this way. A
-  retry searches afresh.
+  beyond its own query; the listing shown for an empty query is not a name
+  search and answers no query but its own; and an exact 64-hex key is never
+  answered this way. A retry searches afresh.
 - A search refutes its query when it finds no one, reports no more pages, and
   the query contains a letter or digit. After that, a client MAY skip the
   directory search for a longer query that starts with the refuted query, and

@@ -10437,6 +10437,38 @@ it("returns a chip to prose at the resolver's bound when the longer name it exte
   }
 });
 
+it("returns a chip to prose at the bound when a provider's first resolution never settles, and lets the send go", async () => {
+  // The contract does not ask a provider to time its resolution; the host
+  // holds the first link to the same bound as each longer name.
+  const h = mountPendingMention();
+  // The bound starts with the resolution, so the clock is faked before Space.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    expect(h.hold("mira", new Promise<never>(() => {}))).toBe(false);
+    expect(h.resolve).toHaveBeenCalledOnce();
+    expect(h.chip("mira")).toHaveAttribute("aria-busy", "true");
+    await act(async () => h.submit());
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await act(async () =>
+      vi.advanceTimersByTime(MENTION_RESOLVE_TIMEOUT_MS - 1),
+    );
+    expect(h.chip("mira")).toHaveAttribute("aria-busy", "true");
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1));
+    // The chip returned to prose and the waiting send went out with it.
+    expect(h.chip("mira")).toBeNull();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@mira ",
+      [],
+      [],
+    );
+    expect(h.input()).toHaveValue("");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("undo after an extended chip settled first removes the words typed after it, then leaves the typed `@mira`", async () => {
   const h = mountDirectoryMention();
   await h.holdMira();

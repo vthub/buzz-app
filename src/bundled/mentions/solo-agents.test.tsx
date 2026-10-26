@@ -39,7 +39,10 @@ import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 import { npubEncode } from "nostr-tools/nip19";
-import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
+import {
+  fetchMentionDirectoryPage,
+  MENTION_DIRECTORY_DELAY_MS,
+} from "./useMentionDirectory";
 import {
   resolveSpaceMention,
   type SpaceMentionResolution,
@@ -1921,7 +1924,7 @@ function directoryCompletion(people: RelaySessionPeople) {
       publish={publish}
     />
   );
-  return { last, complete };
+  return { last, complete, session };
 }
 type RelaySessionPeople = (
   query: string,
@@ -1977,6 +1980,68 @@ it("still searches a longer query when the page read for its prefix was truncate
   expect(people).toHaveBeenLastCalledWith("Mary J", 1, expect.any(AbortSignal));
   expect(last()?.status).toBeUndefined();
   expect(last()?.items.map((item) => item.label)).toEqual(["Mary Jane"]);
+});
+
+it("does not answer a name search from the listing read for an empty query", async () => {
+  vi.useFakeTimers();
+  const people = vi.fn<RelaySessionPeople>(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Mira Everly" }],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  // A pause on `@` lists the community; fewer than 15 profiles completes it.
+  const view = render(complete(""));
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledExactlyOnceWith(
+    "",
+    1,
+    expect.any(AbortSignal),
+  );
+  // The listing is a prefix of every query but is not a name search: a
+  // member who joins or renames after it must still be found by name.
+  view.rerender(complete("mi"));
+  expect(last()?.status).toBe("Searching community…");
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(2);
+  expect(people).toHaveBeenLastCalledWith("mi", 1, expect.any(AbortSignal));
+  expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
+  // The finished name search still answers the queries extending it.
+  view.rerender(complete("mir"));
+  expect(last()?.status).toBeUndefined();
+  expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(2);
+});
+
+it("a retry searches afresh when a complete page for a prefix of the query was cached meanwhile", async () => {
+  const people = vi
+    .fn<RelaySessionPeople>()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue({
+      people: [{ pubkey: "e".repeat(64), name: "Mira Everly" }],
+      hasMore: false,
+    });
+  const { last, complete, session } = directoryCompletion(people);
+  render(complete("mira e"));
+  await waitFor(() =>
+    expect(last()?.status).toBe(
+      "Could not search community people. Retry to refresh.",
+    ),
+  );
+  // Another consumer of the session (a thread composer, or the pending-
+  // mention resolver) reads the complete page for `mira` meanwhile.
+  await fetchMentionDirectoryPage(session, "mira", AbortSignal.timeout(1000));
+  expect(people).toHaveBeenCalledTimes(2);
+  // Retry asked for a read: it must not derive from that page, which the
+  // chooser could not show, but read `mira e` again and render its page.
+  act(() => last()?.retry?.());
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(3));
+  expect(people).toHaveBeenLastCalledWith("mira e", 1, expect.any(AbortSignal));
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]),
+  );
+  expect(last()?.status).toBeUndefined();
+  expect(last()?.retry).toBeUndefined();
 });
 
 it("an empty partial-key search does not refute an exact-key lookup, and keys still match no choice", async () => {
