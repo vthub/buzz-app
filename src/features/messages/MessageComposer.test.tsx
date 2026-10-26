@@ -10446,6 +10446,13 @@ it("returns a chip to prose at the bound when a provider's first resolution neve
   try {
     expect(h.hold("mira", new Promise<never>(() => {}))).toBe(false);
     expect(h.resolve).toHaveBeenCalledOnce();
+    const signal = h.resolve.mock.calls[0]?.[0];
+    // Whether the chip was still pending when the provider was told to stop:
+    // the bound aborts it, not the chip leaving the draft afterwards.
+    let pendingAtAbort: boolean | undefined;
+    signal?.addEventListener("abort", () => {
+      pendingAtAbort = h.chip("mira") !== null;
+    });
     expect(h.chip("mira")).toHaveAttribute("aria-busy", "true");
     await act(async () => h.submit());
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
@@ -10453,9 +10460,12 @@ it("returns a chip to prose at the bound when a provider's first resolution neve
       vi.advanceTimersByTime(MENTION_RESOLVE_TIMEOUT_MS - 1),
     );
     expect(h.chip("mira")).toHaveAttribute("aria-busy", "true");
+    expect(signal?.aborted).toBe(false);
     expect(h.messages.send).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTime(1));
-    // The chip returned to prose and the waiting send went out with it.
+    // The bound told the provider's in-flight work to stop, the chip returned
+    // to prose, and the waiting send went out with it.
+    expect(pendingAtAbort).toBe(true);
     expect(h.chip("mira")).toBeNull();
     expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
       "channel",
@@ -10464,6 +10474,33 @@ it("returns a chip to prose at the bound when a provider's first resolution neve
       [],
     );
     expect(h.input()).toHaveValue("");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("removing a pending chip before the bound aborts the provider's signal and leaves no bound timer behind", async () => {
+  // A provider that ignores abort must not keep the host's 8 s timer alive
+  // after the chip left: the bound is cleared with the chip's signal.
+  const h = mountPendingMention();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const timers = vi.getTimerCount();
+    expect(h.hold("honey", new Promise<never>(() => {}))).toBe(false);
+    const signal = h.resolve.mock.calls[0]?.[0];
+    expect(signal?.aborted).toBe(false);
+    // Typing leaves the editor a short timer of its own; past it, the bound
+    // is the one timer the chip added.
+    act(() => vi.advanceTimersByTime(100));
+    expect(vi.getTimerCount()).toBe(timers + 1);
+    act(() => h.input().undo(false));
+    expect(h.input()).toHaveValue("@honey");
+    expect(h.chip("honey")).toBeNull();
+    expect(signal?.aborted).toBe(true);
+    // The undo leaves the editor's short timer again; past it, nothing: the
+    // bound went with the chip's signal rather than running on to 8 s.
+    act(() => vi.advanceTimersByTime(100));
+    expect(vi.getTimerCount()).toBe(timers);
   } finally {
     vi.useRealTimers();
   }

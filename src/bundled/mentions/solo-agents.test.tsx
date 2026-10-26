@@ -2044,6 +2044,64 @@ it("a retry searches afresh when a complete page for a prefix of the query was c
   expect(last()?.retry).toBeUndefined();
 });
 
+it("scopes a retry to its query: later queries derive from a cached prefix page and a refuted prefix again, while that query still reads afresh", async () => {
+  vi.useFakeTimers();
+  const offline = new Error("offline");
+  const people = vi
+    .fn<RelaySessionPeople>()
+    .mockRejectedValueOnce(offline)
+    .mockRejectedValueOnce(offline)
+    .mockImplementation(async (query) => ({
+      people: query.startsWith("mira")
+        ? [{ pubkey: "e".repeat(64), name: "Mira Everly" }]
+        : query.startsWith("lu")
+          ? [{ pubkey: "f".repeat(64), name: "Lucy Lu" }]
+          : [],
+      hasMore: false,
+    }));
+  const { last, complete, session } = directoryCompletion(people);
+  const failed = "Could not search community people. Retry to refresh.";
+  // The picker keeps one hook mounted across openings: one instance sees
+  // every query of the session.
+  const view = render(complete("mira e"));
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(last()?.status).toBe(failed);
+  // Still offline: the retry fails too and Retry stays offered.
+  act(() => last()?.retry?.());
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(2);
+  expect(last()?.status).toBe(failed);
+  // Other consumers of the session settle complete `lu` and `mira` pages and
+  // then an empty `zed` search meanwhile (a read clears the refuted prefix,
+  // so the empty search comes last).
+  const signal = new AbortController().signal;
+  await fetchMentionDirectoryPage(session, "lu", signal);
+  await fetchMentionDirectoryPage(session, "mira", signal);
+  await fetchMentionDirectoryPage(session, "zed", signal);
+  expect(people).toHaveBeenCalledTimes(5);
+  // The retry was `mira e`'s. `lucy` is answered from the `lu` page on the
+  // keystroke, and `zedd` is refuted by the empty `zed` search; neither reads.
+  view.rerender(complete("lucy"));
+  expect(last()?.status).toBeUndefined();
+  expect(last()?.items.map((item) => item.label)).toEqual(["Lucy Lu"]);
+  view.rerender(complete("zedd"));
+  expect(last()?.status).not.toBe("Searching community…");
+  expect(last()?.items).toEqual([]);
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(5);
+  // Back on `mira e`, the asked-for read is still owed: its failure and
+  // Retry stand, and a second Retry reads `mira e` afresh rather than
+  // deriving it from the complete `mira` page.
+  view.rerender(complete("mira e"));
+  expect(last()?.status).toBe(failed);
+  act(() => last()?.retry?.());
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(6);
+  expect(people).toHaveBeenLastCalledWith("mira e", 1, expect.any(AbortSignal));
+  expect(last()?.status).toBeUndefined();
+  expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
+});
+
 it("an empty partial-key search does not refute an exact-key lookup, and keys still match no choice", async () => {
   const key = "9".repeat(64);
   const people = vi.fn(async (query: string) => ({

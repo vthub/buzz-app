@@ -139,7 +139,12 @@ export function useMentionDirectory(
     allowsOutsideMentions(channel) &&
     !channel?.archived &&
     !channel?.readOnly;
-  const [attempt, setAttempt] = useState(0);
+  // A retry belongs to the query it was asked for. The picker keeps one hook
+  // mounted across openings, so a count that never reset would hold every
+  // later query of the session to a fresh read, off the prefix-page and
+  // refuted shortcuts, after one transient failure.
+  const [retried, setRetried] = useState<{ query: string; attempt: number }>();
+  const attempt = retried?.query === query ? retried.attempt : 0;
   const [state, setState] = useState<{
     session: ComposerSession;
     query: string;
@@ -210,7 +215,10 @@ export function useMentionDirectory(
   const shown = hit ?? settled.get(session)?.get(lifetime);
   const retry = useCallback(() => {
     pages.get(session)?.delete(query);
-    setAttempt((value) => value + 1);
+    setRetried((prior) => ({
+      query,
+      attempt: (prior?.query === query ? prior.attempt : 0) + 1,
+    }));
   }, [session, query]);
   return useMemo(
     () => ({

@@ -1300,16 +1300,30 @@ function Composer({
    * resolution and each longer name a chip extends into. The bundled resolver
    * races its first resolution against the same constant, redundant under
    * this but harmless, and answers a chained resolve at once over the page it
-   * already read. Expiry is null, prose, as the resolver's own bound is. */
+   * already read. Expiry is null, prose, as the resolver's own bound is.
+   * The provider gets its own signal, which follows the chip's and is also
+   * aborted at expiry, so work that outlives the bound is told to stop; and
+   * the chip's abort clears the timer, so a provider that ignores it leaves
+   * nothing running after Backspace or unmount. */
   function bounded(
     resolve: CompletionPending["resolve"],
     signal: AbortSignal,
   ): Promise<CompletionResolution> {
     return new Promise((settle) => {
-      const timer = setTimeout(() => settle(null), MENTION_RESOLVE_TIMEOUT_MS);
-      resolve(signal)
+      const own = new AbortController();
+      const timer = setTimeout(() => {
+        settle(null);
+        end();
+      }, MENTION_RESOLVE_TIMEOUT_MS);
+      const end = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", end);
+        own.abort();
+      };
+      signal.addEventListener("abort", end, { once: true });
+      resolve(own.signal)
         .then(settle, () => settle(null))
-        .finally(() => clearTimeout(timer));
+        .finally(end);
     });
   }
   /** The longest of `continued` that the chip's name plus the words typed
