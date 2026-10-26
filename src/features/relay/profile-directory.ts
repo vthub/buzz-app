@@ -22,6 +22,10 @@ export interface ProfileQueries {
   owner?(pubkey: string): string | undefined;
 }
 
+/** Authors per profile read, the reader's largest page. A page that fills it
+ * may have left out authors who do have a profile. */
+const PROFILE_PAGE = 500;
+
 /** One bounded source of signed profile events. Display values are derived from it. */
 export function createProfileDirectory(
   reader: RelayReader,
@@ -130,28 +134,31 @@ export function createProfileDirectory(
         if (priority === "foreground" && batch.priority === "background") {
           batch.priority = priority;
           void reader
-            .read([{ kinds: [0], authors: batch.authors, limit: 500 }], {
-              signal,
-              priority,
-            })
+            .read(
+              [{ kinds: [0], authors: batch.authors, limit: PROFILE_PAGE }],
+              { signal, priority },
+            )
             .catch(() => {});
         }
         waiting.add(batch.work);
       }
       return !batch && (refresh || !snapshot.has(id));
     });
-    for (let offset = 0; offset < missing.length; offset += 500) {
-      const authors = missing.slice(offset, offset + 500);
+    for (let offset = 0; offset < missing.length; offset += PROFILE_PAGE) {
+      const authors = missing.slice(offset, offset + PROFILE_PAGE);
       const batch = {
         authors,
         priority,
         work: reader
-          .read([{ kinds: [0], authors, limit: 500 }], { signal, priority })
+          .read([{ kinds: [0], authors, limit: PROFILE_PAGE }], {
+            signal,
+            priority,
+          })
           .then((result) => {
             if (signal.aborted) return;
             accept(result.filter((event) => authors.includes(event.pubkey)));
             // A page at the limit may have left out authors who do have one.
-            if (result.length < 500) missed(authors);
+            if (result.length < PROFILE_PAGE) missed(authors);
           })
           .finally(() => {
             for (const id of authors)
