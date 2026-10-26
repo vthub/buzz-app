@@ -404,7 +404,10 @@ Example` for `mira`) is a declined Space, not a pending one, so the next word
 can still complete it; a longer name learned only after the chip was held
 extends the chip over the words typed after it when they spell one of those
 names up to a name boundary, the longest they complete (`@mira Example hi`
-tags `Mira Example`), and otherwise returns it to prose. Editing a
+tags `Mira Example`), and otherwise returns it to prose, where the reopened
+chooser answers the rest of the name from the page already read for the chip
+(a complete directory page settles every query extending its own, with no
+further read), so the Space that completes the name selects it. Editing a
 selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes

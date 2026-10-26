@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { allowsOutsideMentions } from "../../features/messages/mention-admission";
+import { matchPerson } from "../../features/search/person-match";
 
 type Person = Awaited<
   ReturnType<ComposerSession["directMessages"]["people"]>
@@ -34,6 +35,33 @@ function remember(session: ComposerSession, query: string, page: Page) {
   if (queries.size > CACHE_LIMIT)
     queries.delete(queries.keys().next().value ?? "");
 }
+/**
+ * The longest cached complete page for a proper prefix of `query`. The relay
+ * matches names by prefix, so a page for `mira` that reported no more pages
+ * already holds every match for `mira e`, `mira exam` and `mira example`;
+ * `derive` filters it to the longer query. A truncated page may have left a
+ * match out, and an exact key is an author lookup that no name prefix
+ * answers, so neither derives.
+ */
+function prefixPage(session: ComposerSession, query: string) {
+  const queries = pages.get(session);
+  if (!queries || exactKey(query)) return undefined;
+  let best: [string, Page] | undefined;
+  for (const [key, page] of queries)
+    if (
+      !page.more &&
+      key.length < query.length &&
+      query.startsWith(key) &&
+      (!best || key.length > best[0].length)
+    )
+      best = [key, page];
+  return best?.[1];
+}
+/** The page for `query` read out of a complete page for its prefix. */
+const derive = (page: Page, query: string): Page => ({
+  people: page.people.filter((person) => matchPerson(person.name, query)),
+  more: false,
+});
 // The last settled page per chooser lifetime. Inline completion remounts its
 // provider on every keystroke, so a component-local copy would be lost.
 const settled = new WeakMap<ComposerSession, Map<string, Page>>();
@@ -56,9 +84,10 @@ const exhausted = new WeakMap<ComposerSession, string>();
 const refutedPage: Page = { people: empty, more: false };
 
 /**
- * The first page for `query`: the shared cache, or one relay read that fills it.
- * The chooser and the pending-mention resolver both read through here, so a
- * page either has found is the other's cache hit.
+ * The first page for `query`: the shared cache, a complete cached page for a
+ * prefix of it, or one relay read that fills the cache. The chooser and the
+ * pending-mention resolver both read through here, so a page either has found
+ * is the other's cache hit.
  */
 export async function fetchMentionDirectoryPage(
   session: ComposerSession,
@@ -67,6 +96,8 @@ export async function fetchMentionDirectoryPage(
 ): Promise<Page> {
   const hit = cached(session, query);
   if (hit) return hit;
+  const source = prefixPage(session, query);
+  if (source) return derive(source, query);
   exhausted.delete(session);
   const { people, hasMore } = await session.directMessages.people(
     query,
@@ -126,10 +157,18 @@ export function useMentionDirectory(
     prefix !== undefined &&
     query.length > prefix.length &&
     query.startsWith(prefix);
+  const exact = active ? cached(session, query) : undefined;
+  // Like the refuted shortcut, a prefix page serves only until a retry asks
+  // for a fresh read. Its identity keys the derived page, so the result is
+  // stable across renders until another read lands in the cache.
+  const source =
+    active && !exact && attempt === 0 ? prefixPage(session, query) : undefined;
+  const derived = useMemo(
+    () => (source ? derive(source, query) : undefined),
+    [source, query],
+  );
   const hit = active
-    ? (cached(session, query) ??
-      own?.page ??
-      (refuted ? refutedPage : undefined))
+    ? (exact ?? own?.page ?? derived ?? (refuted ? refutedPage : undefined))
     : undefined;
   const searching = active && !hit;
   useEffect(() => {

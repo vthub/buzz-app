@@ -1472,11 +1472,12 @@ it("shows local rows before the directory, appends outside rows, and reuses sett
   expect(last()?.status).toBe("Searching community…");
   await act(() => vi.advanceTimersByTimeAsync(200));
   expect(people).toHaveBeenCalledTimes(1);
+  // A truncated page: a longer query cannot be read out of it, so it searches.
   await act(async () =>
-    pages.get("La")?.({ people: [lara, larry], hasMore: false }),
+    pages.get("La")?.({ people: [lara, larry], hasMore: true }),
   );
   expect(labels()).toEqual(["Larkin", "Lara", "Larry Outside"]);
-  expect(last()?.status).toBeUndefined();
+  expect(last()?.status).toBe("Narrow your search to see more members.");
   // A new query keeps still-matching people from the last page while it loads.
   view.rerender(
     <MentionCompletion
@@ -1499,7 +1500,7 @@ it("shows local rows before the directory, appends outside rows, and reuses sett
     <MentionCompletion {...props} query={{ start: 0, end: 3, query: "La" }} />,
   );
   expect(labels()).toEqual(["Larkin", "Lara", "Larry Outside"]);
-  expect(last()?.status).toBeUndefined();
+  expect(last()?.status).toBe("Narrow your search to see more members.");
   await act(() => vi.advanceTimersByTimeAsync(200));
   expect(people).toHaveBeenCalledTimes(2);
 });
@@ -1890,8 +1891,11 @@ it("closes prose after an unknown name without status or recovery, and skips sea
   await waitFor(() =>
     expect(last()?.items.map((item) => item.label)).toEqual(["Outside"]),
   );
+  // The complete page for `Out` already answers every query extending it:
+  // `Outside ` is its one name plus a trailing space, prose, with no read.
   view.rerender(complete("Outside "));
-  await waitFor(() => expect(people).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(last()).toEqual({ items: [] }));
+  expect(people).toHaveBeenCalledTimes(2);
 });
 
 function directoryCompletion(people: RelaySessionPeople) {
@@ -1922,6 +1926,58 @@ function directoryCompletion(people: RelaySessionPeople) {
 type RelaySessionPeople = (
   query: string,
 ) => Promise<{ people: { pubkey: string; name: string }[]; hasMore: boolean }>;
+
+it("answers a longer query from the complete page already read for its prefix, with no read and no typing pause", async () => {
+  vi.useFakeTimers();
+  const people = vi.fn<RelaySessionPeople>(async () => ({
+    people: [
+      { pubkey: "e".repeat(64), name: "Mary Jane" },
+      { pubkey: "f".repeat(64), name: "Mark" },
+    ],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("Mar"));
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(1);
+  expect(last()?.items.map((item) => item.label)).toEqual([
+    "Mark",
+    "Mary Jane",
+  ]);
+  // Every match for `Mary J` is on the complete page for `Mar`: the page is
+  // settled on the keystroke, so the multi-word query is admitted at once.
+  view.rerender(complete("Mary J"));
+  expect(last()?.items.map((item) => item.label)).toEqual(["Mary Jane"]);
+  expect(last()?.status).toBeUndefined();
+  expect(last()?.spacePending).toBeUndefined();
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(1);
+  // Space decides over the derived page, as over the page itself.
+  view.rerender(complete("Mary Jane"));
+  expect(last()?.spaceId).toBe("e".repeat(64));
+  expect(last()?.spacePending).toBeUndefined();
+  expect(people).toHaveBeenCalledTimes(1);
+});
+
+it("still searches a longer query when the page read for its prefix was truncated", async () => {
+  vi.useFakeTimers();
+  const people = vi.fn<RelaySessionPeople>(async (query) => ({
+    people: [{ pubkey: "e".repeat(64), name: "Mary Jane" }],
+    hasMore: query === "Mar",
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("Mar"));
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(last()?.status).toBe("Narrow your search to see more members.");
+  // A truncated page may have left a match out: it answers only its own query.
+  view.rerender(complete("Mary J"));
+  expect(last()?.status).toBe("Searching community…");
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
+  expect(people).toHaveBeenCalledTimes(2);
+  expect(people).toHaveBeenLastCalledWith("Mary J", 1, expect.any(AbortSignal));
+  expect(last()?.status).toBeUndefined();
+  expect(last()?.items.map((item) => item.label)).toEqual(["Mary Jane"]);
+});
 
 it("an empty partial-key search does not refute an exact-key lookup, and keys still match no choice", async () => {
   const key = "9".repeat(64);
@@ -2209,8 +2265,9 @@ it("keeps still-matching directory people across the inline host's per-keystroke
   await waitFor(() =>
     expect(people).toHaveBeenCalledWith("La", 1, expect.anything()),
   );
+  // A truncated page, so the longer query below searches rather than reads it.
   await act(async () =>
-    resolvers.get("La")?.({ people: [lara, larry], hasMore: false }),
+    resolvers.get("La")?.({ people: [lara, larry], hasMore: true }),
   );
   await waitFor(() =>
     expect(options()).toEqual([
@@ -3242,6 +3299,28 @@ it("the resolver reads a page the chooser already settled from the shared cache"
       pubkey: outsideJose,
       name: "Jose",
     });
+    expect(h.people).toHaveBeenCalledTimes(1);
+  } finally {
+    h.dispose();
+  }
+});
+it("the resolver reads a longer name's page out of the complete page for its prefix without another read", async () => {
+  const h = spaceFixture("Member");
+  try {
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose Luis" }],
+      hasMore: false,
+    });
+    // The chooser's complete page for `jose` holds every match for `jose luis`.
+    await expect(
+      resolveSpaceMention(
+        h.session,
+        { channelId: "parent", selected: [] },
+        "jose luis",
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ pubkey: outsideJose, name: "Jose Luis" });
     expect(h.people).toHaveBeenCalledTimes(1);
   } finally {
     h.dispose();

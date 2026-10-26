@@ -242,6 +242,28 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
     await expect(listbox).toHaveCount(0);
   }
 
+  await input.fill("");
+  await page.evaluate(() => window.mentionFixture.holdSearches());
+  try {
+    // An uncached query, so a directory read is in flight when dismissed. It
+    // goes first: once a complete page for a prefix of `Hone` is cached, the
+    // chooser answers the query from it and reads nothing.
+    await input.pressSequentially("@Hone");
+    await expect(options).toHaveCount(2);
+    await expect.poll(held).toContain("Hone");
+    await input.press("Escape");
+    await expect(listbox).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.mentionFixture.releaseSearches());
+  }
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.mentionFixture.reads())).pending,
+    )
+    .toBe(0);
+  await expect(listbox).toHaveCount(0);
+
   await input.fill("@Hon");
   await expect(options).toHaveCount(2);
   await input.press("Tab");
@@ -266,26 +288,6 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
     await input.press("Tab");
     await expect(chips).toHaveCount(1);
     await input.pressSequentially("later");
-  } finally {
-    await page.evaluate(() => window.mentionFixture.releaseSearches());
-  }
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => window.mentionFixture.reads())).pending,
-    )
-    .toBe(0);
-  await expect(listbox).toHaveCount(0);
-
-  await input.fill("");
-  await page.evaluate(() => window.mentionFixture.holdSearches());
-  try {
-    // An uncached query, so a directory read is in flight when dismissed.
-    await input.pressSequentially("@Hone");
-    await expect(options).toHaveCount(2);
-    await expect.poll(held).toContain("Hone");
-    await input.press("Escape");
-    await expect(listbox).toHaveCount(0);
   } finally {
     await page.evaluate(() => window.mentionFixture.releaseSearches());
   }

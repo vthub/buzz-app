@@ -110,8 +110,9 @@ did not fail. While the search runs, the chooser shows no rows for that query.
 If the search fails, the chooser keeps its error and a way to retry. The
 desktop UI test "a failed multi-word directory search keeps its error and
 retry" in [solo-agents.test.tsx](solo-agents.test.tsx) covers this case:
-`@Mary J` fails, then Retry finds Mary Jane. The one case where the client MAY
-skip the search is the refuted prefix in section 6. An `@` inside a mention
+`@Mary J` fails, then Retry finds Mary Jane. The client MAY skip the search
+only for the refuted prefix in section 6, or when a complete finished search
+for a prefix of the query already answers it (section 6). An `@` inside a mention
 that the user already selected, or that is pending (section 5), including one
 that has extended over the words typed after it, does not open a query.
 
@@ -255,7 +256,11 @@ one of those names up to a name boundary (`@mira Example hi` becomes a pending
 complete, as Space would have needed all of it typed; this section then applies
 to the longer name as if Space had been typed after it, under the same bound.
 Words that stop mid-name or complete none of those names return the text to
-prose. In a
+prose. The chooser then reopens over the typed name, and the complete search
+for the pending name already settles the directory for every query extending
+it (section 6), so no search is waiting and the Space that completes the
+longer name selects it: `@mira Exam` returned to prose, then `ple ` selects
+`Mira Example`. In a
 DM a pending name that resolves to someone outside the DM returns to prose,
 since the chooser's "Will not be notified" row was never shown. Sending while
 a mention is pending waits for it, through such an extension. A pending
@@ -277,6 +282,13 @@ These rules keep a row from moving under the user's pointer or keyboard.
   last finished search. It MAY cache finished searches for the session. It MUST
   NOT cache failures or searches that find no one. A new opening of the chooser
   searches again for such a query.
+- A finished search that reports no more pages holds every match for a longer
+  query that starts with its query, because the relay matches names by prefix.
+  A client MAY answer such a longer query from that page, filtered by section 3,
+  with no search and no typing pause; the directory is then settled for it
+  (section 5). A search that reported more pages, or failed, answers nothing
+  beyond its own query, and an exact 64-hex key is never answered this way. A
+  retry searches afresh.
 - A search refutes its query when it finds no one, reports no more pages, and
   the query contains a letter or digit. After that, a client MAY skip the
   directory search for a longer query that starts with the refuted query, and

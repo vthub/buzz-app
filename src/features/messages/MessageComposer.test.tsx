@@ -10207,15 +10207,12 @@ it("selects a longer directory name on the Space that completes it when its page
   await h.user.keyboard(" ");
   expect(h.input()).toHaveValue("@mira ");
   expect(h.chip("mira")).toBeNull();
-  await h.user.keyboard("Example");
-  await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
-  await h.release({ people: [mira], hasMore: false });
-  await waitFor(() =>
-    expect(screen.queryByText("Searching community…")).toBeNull(),
-  );
-  await h.user.keyboard(" hi");
+  // The complete page for `mira` already answers every query extending it,
+  // so the name shows on each keystroke with no further read.
+  await h.user.keyboard("Example hi");
   expect(h.input()).toHaveValue("@Mira Example hi");
   expect(h.recipients()).toHaveLength(1);
+  expect(h.people).toHaveBeenCalledOnce();
 });
 
 it("extends a pending chip to the one longer name the typed words complete when several continue it", async () => {
@@ -10289,39 +10286,58 @@ it.each([
   },
 );
 
-it("reopens the chooser over the restored name when the caret ends a pending chip returned to prose", async () => {
+it("selects a longer directory name on the Space that completes it after its page returned a pending chip to prose mid-word", async () => {
+  // The page lands while the longer name is still being typed: the chip
+  // returns to text, the chooser reopens over `mira Exam`, and the complete
+  // page for `mira` already answers that query, so the name shows at once
+  // and the Space after `ple` selects it without another read.
   const h = mountDirectoryMention();
   await h.holdMira();
   await h.user.keyboard("Exam");
-  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await waitFor(() => expect(h.people).toHaveBeenCalledOnce());
   await h.release({ people: [mira], hasMore: false });
   await waitFor(() => expect(h.input()).toHaveValue("@mira Exam"));
-  // `@mira Exam` is an open query again: the chooser searches it, shows the
-  // name, and the slow-typist path selects on the Space after `ple`.
-  await waitFor(() =>
-    expect(h.people).toHaveBeenLastCalledWith(
-      "mira Exam",
-      1,
-      expect.anything(),
-    ),
-  );
-  await h.release({ people: [mira], hasMore: false });
+  expect(
+    within(h.input()).queryByRole("img", { name: /^Resolving mention / }),
+  ).toBeNull();
   await screen.findByRole("option", { name: /Mira Example/ });
-  await h.user.keyboard("ple");
-  await waitFor(() =>
-    expect(h.people).toHaveBeenLastCalledWith(
-      "mira Example",
-      1,
-      expect.anything(),
-    ),
-  );
-  await h.release({ people: [mira], hasMore: false });
-  await waitFor(() =>
-    expect(screen.queryByText("Searching community…")).toBeNull(),
-  );
-  await h.user.keyboard(" ");
+  expect(screen.queryByText("Searching community…")).toBeNull();
+  await h.user.keyboard("ple ");
   expect(h.input()).toHaveValue("@Mira Example ");
   expect(h.recipients()).toHaveLength(1);
+  expect(h.people).toHaveBeenCalledOnce();
+  await h.user.keyboard("hi");
+  h.submit();
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Mira Example is not in this channel.",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Mira Example hi",
+    [],
+  ]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
+});
+
+it("selects a longer directory name on the Space that completes it after its page returned a pending chip to prose before the next word", async () => {
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await waitFor(() => expect(h.people).toHaveBeenCalledOnce());
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() => expect(h.chip("mira")).toBeNull());
+  expect(h.input()).toHaveValue("@mira ");
+  // `mira ` is admitted again: the page for `mira` names what continues it.
+  await screen.findByRole("option", { name: /Mira Example/ });
+  expect(screen.queryByText("Searching community…")).toBeNull();
+  await h.user.keyboard("Example ");
+  expect(h.input()).toHaveValue("@Mira Example ");
+  expect(h.recipients()).toHaveLength(1);
+  expect(h.people).toHaveBeenCalledOnce();
 });
 
 it("returns a pending chip to prose when the typed words changed under a composition before it could extend", async () => {
