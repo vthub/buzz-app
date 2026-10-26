@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { chipFaces, resetChipFaces } from "../chips/faceResolver";
 import { InlineChip } from "./InlineChip";
@@ -66,6 +67,71 @@ it("announces unresolved identities without pretending the fallback is a name", 
   expect(screen.getByRole("img", { name: "Unresolved agent" })).toHaveAttribute(
     "data-state",
     "unresolved",
+  );
+});
+
+it("shows a resolving mention as a busy chip whose spinner borrows the sigil's box", () => {
+  const { container } = render(
+    <InlineChip
+      address={{ kind: "agent", id: "pending-1" }}
+      face={{ label: "Example", loading: true, resolved: false }}
+    />,
+  );
+  const chip = screen.getByRole("img", { name: "Resolving mention Example" });
+  expect(chip).toHaveAttribute("aria-busy", "true");
+  expect(chip).toHaveAttribute("data-state", "loading");
+  // The glyph stays in the flow so the chip keeps its width when it returns.
+  expect(chip).toHaveTextContent("@Example");
+  const trigger = chip.querySelector(".inline-chip-trigger");
+  expect(trigger).toHaveAttribute("data-loading");
+  expect(trigger?.querySelector(".inline-chip-spinner")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  // Nothing truthful to preview or open yet, even for an interactive consumer.
+  expect(container.querySelector("button")).toBeNull();
+});
+
+it("settling drops the spinner and the busy state without changing the glyph", () => {
+  const { rerender } = render(
+    <InlineChip
+      address={address}
+      interactive={false}
+      face={{ label: "Example", loading: true, resolved: false }}
+    />,
+  );
+  rerender(
+    <InlineChip
+      address={address}
+      interactive={false}
+      face={{ label: "Example", loading: false, resolved: true }}
+    />,
+  );
+  const chip = screen.getByRole("img", { name: "Person Example" });
+  expect(chip).not.toHaveAttribute("aria-busy");
+  expect(chip.querySelector(".inline-chip-spinner")).toBeNull();
+  expect(chip.querySelector(".inline-chip-trigger")).not.toHaveAttribute(
+    "data-loading",
+  );
+  expect(chip).toHaveTextContent("@Example");
+});
+
+// jsdom does not load chips.css, so the stylesheet's side of the contract is
+// checked as text: the hidden glyph keeps its box, and reduced motion stills
+// the spinner.
+it("styles the resolving sigil transparent and stills the spinner under reduced motion", () => {
+  const css = readFileSync(
+    "src/shared/design-system/styles/chips.css",
+    "utf8",
+  ).replace(/\/\*[\s\S]*?\*\//g, "");
+  expect(css).toMatch(
+    /\.inline-chip-trigger\[data-loading\]\s*\{[^}]*color:\s*transparent;/,
+  );
+  const reduced = css.match(
+    /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n {2}\}/,
+  );
+  expect(reduced?.[1]).toMatch(
+    /\.inline-chip-spinner\s*\{[^}]*animation:\s*none;/,
   );
 });
 

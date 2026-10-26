@@ -56,6 +56,37 @@
     color: var(--text-metadata);
   }
 
+  /**
+   * Resolving reference: a mention committed before the client could decide
+   * on its recipient. The sigil keeps its exact advance width and baseline but
+   * paints transparent, and the spinner sits in its box, so settling into a
+   * recipient (or back into text) moves nothing. The spinner names its own
+   * colour because it would otherwise inherit the transparent one.
+   */
+  .inline-chip-trigger {
+    position: relative;
+  }
+
+  .inline-chip-trigger[data-loading] {
+    color: transparent;
+  }
+
+  .inline-chip-spinner {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 1em;
+    height: 1em;
+    color: var(--text-standard);
+    animation: inline-chip-spin 1s linear infinite;
+  }
+
+  @keyframes inline-chip-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   .inline-chip-label {
     min-width: 0;
     overflow: hidden;
@@ -114,6 +145,10 @@
       transition-duration: 0ms;
     }
     .inline-chip-qualifier[data-reveal] {
+      animation: none;
+    }
+    /* A still notch reads as "waiting" without motion. */
+    .inline-chip-spinner {
       animation: none;
     }
   }

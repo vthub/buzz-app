@@ -1,4 +1,4 @@
-import { LinkIcon, ChatCircleIcon } from "../icons/index";
+import { ChatCircleIcon, CircleNotchIcon, LinkIcon } from "../icons/index";
 import { useSyncExternalStore } from "react";
 
 import type { ChipAddress, ChipKind } from "../chips/address";
@@ -61,7 +61,23 @@ export function InlineChip({
     <>
       {Icon ? <Icon className="inline-chip-icon" aria-hidden="true" /> : null}
       <span className="inline-chip-label">
-        {trigger}
+        {trigger ? (
+          // While the face resolves, a spinner borrows the sigil's box: the
+          // glyph stays in the flow (painted transparent) so nothing shifts
+          // when it returns. A kind without a sigil carries its icon instead.
+          <span
+            className="inline-chip-trigger"
+            data-loading={face.loading || undefined}
+          >
+            {trigger}
+            {face.loading ? (
+              <CircleNotchIcon
+                className="inline-chip-spinner"
+                aria-hidden="true"
+              />
+            ) : null}
+          </span>
+        ) : null}
         {face.label}
       </span>
       {qualifier ? (
@@ -75,18 +91,21 @@ export function InlineChip({
     </>
   );
 
-  const accessibleName = face.resolved
-    ? `${kind} ${face.label}${qualifier ? `, ${qualifier.accessibleLabel}` : ""}`
-    : `Unresolved ${kind.toLowerCase()}`;
+  const accessibleName = face.loading
+    ? `Resolving mention ${face.label}`
+    : face.resolved
+      ? `${kind} ${face.label}${qualifier ? `, ${qualifier.accessibleLabel}` : ""}`
+      : `Unresolved ${kind.toLowerCase()}`;
   const state = face.loading
     ? "loading"
     : face.resolved
       ? "resolved"
       : "unresolved";
 
-  // An unresolved reference has nothing truthful to preview or open. A chip
-  // that invites an action and does nothing is worse than an inert reference.
-  if (!interactive || !face.resolved) {
+  // An unresolved or still-resolving reference has nothing truthful to preview
+  // or open. A chip that invites an action and does nothing is worse than an
+  // inert reference.
+  if (!interactive || !face.resolved || face.loading) {
     return (
       <span
         data-buzz-ui=""
@@ -94,6 +113,7 @@ export function InlineChip({
         data-kind={address.kind}
         data-state={state}
         aria-label={accessibleName}
+        aria-busy={face.loading || undefined}
         role="img"
       >
         {content}

@@ -1613,6 +1613,35 @@ function InlineChipSpecimen() {
       </SpecimenGroup>
 
       <SpecimenGroup
+        label="Resolving mention"
+        code={`<p className="text-body text-primary">
+  Ask{" "}
+  <InlineChip
+    address={{ kind: "agent", id: "pending-1" }}
+    face={{ label: "Example", loading: true, resolved: false }}
+    interactive={false}
+  />{" "}
+  while the recipient is still being decided.
+</p>`}
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-body text-primary">
+            Ask{" "}
+            <InlineChip
+              address={{ kind: "agent", id: "pending-1" }}
+              face={{ label: "Example", loading: true, resolved: false }}
+              interactive={false}
+            />{" "}
+            while the recipient is still being decided.
+          </p>
+          <p className="max-w-md text-body-sm text-tertiary">
+            The spinner sits in the sigil&apos;s box, so the chip does not move
+            when it settles into a recipient or back into text.
+          </p>
+        </div>
+      </SpecimenGroup>
+
+      <SpecimenGroup
         label="Long label truncates"
         code={`<div className="flex flex-wrap items-center gap-4">
   <InlineChip address={CHIP_LONG} />
