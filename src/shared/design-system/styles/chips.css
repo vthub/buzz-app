@@ -72,19 +72,26 @@
   }
 
   .inline-chip-spinner {
-    position: absolute;
-    /* Sized and placed against the `@` glyph's ink rather than its line box.
-       Tabler's notch spans 20/24 of its icon box, so 0.75em draws a 0.625em
-       arc: taller than the x-height, shorter than a capital, inside the
-       glyph's 0.85em of ink, with a clear 0.2em before the name. Inter's `@`
-       is optically centred 0.26em above the baseline (the x-height midline),
-       which with its 0.24em descender is 0.5em above the content box's
-       bottom edge; a line-box centre would sit it 0.14em too high. */
-    left: 50%;
-    bottom: 0.5em;
-    translate: -50% 50%;
+    /* Set like a glyph of the name, not in the sigil's line box. An inline
+       SVG's baseline is its bottom edge, so `bottom` offsets from the text
+       baseline itself; Chromium rounds a font's ascent and descent to whole
+       px, so any offset from the content box drifts with size, while this
+       holds at every scale. Tabler's notch inks 20/24 of its box, so 0.75em
+       draws a 0.625em arc. Centring it on the cap-height midline (`cap` is the
+       font's own: Inter 0.727em) rests its foot 0.05em above the baseline and
+       its crown just under the cap height, between the x-height and the
+       capitals, where an inline glyph reads as part of the word. The `@`
+       centred it 0.08em lower: its ink descends 0.19em below the baseline. */
+    position: relative;
+    display: inline-block;
+    vertical-align: baseline;
     width: 0.75em;
     height: 0.75em;
+    /* Advances nothing: the transparent `@` keeps the width, and the arc is
+       centred in its advance (Inter: 0.966em). */
+    margin-right: -0.75em;
+    left: calc((-0.966em - 0.75em) / 2);
+    bottom: calc(0.5cap - 0.375em);
     color: var(--text-standard);
     animation: inline-chip-spin 1s linear infinite;
   }
