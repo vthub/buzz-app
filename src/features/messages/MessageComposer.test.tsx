@@ -10094,6 +10094,35 @@ it("asks about a settled outside agent before sending, like a chosen one", async
   }
 });
 
+it("keeps the resolver of a chip removed as its resolution landed, so redo settles it", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const landed = deferred<MentionRecipient | null>();
+  const restarted = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", landed.promise);
+    // The resolution lands in the same tick as the undo removing its chip,
+    // before the commit whose effect would have aborted it: nothing to settle.
+    await act(async () => {
+      landed.resolve(first);
+      h.input().undo(false);
+    });
+    expect(h.input()).toHaveValue("@honey");
+    expect(h.resolve).toHaveBeenCalledOnce();
+    h.resolve.mockImplementation(() => restarted.promise);
+    act(() => h.input().undo(true));
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeInTheDocument();
+    expect(h.resolve).toHaveBeenCalledTimes(2);
+    await act(async () => restarted.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    landed.resolve(null);
+    restarted.resolve(null);
+  }
+});
+
 it("removing a pending chip abandons its resolution, and redo starts it again", async () => {
   const h = mountPendingMention();
   h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));

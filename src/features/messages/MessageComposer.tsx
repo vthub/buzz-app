@@ -1184,7 +1184,6 @@ function Composer({
   ) {
     const entry = pendingMentions.current.get(id);
     if (!entry || signal.aborted) return;
-    pendingMentions.current.delete(id);
     // Exactly what Tab would have inserted: admitted now, within the cap.
     const accepted =
       recipient &&
@@ -1197,7 +1196,15 @@ function Composer({
       valueRef.current.recipients.length < 32
         ? recipient
         : null;
-    input.current?.settlePendingMention(id, accepted);
+    if (!input.current?.settlePendingMention(id, accepted)) {
+      // The chip left the draft in the commit before the effect below could
+      // abort this resolution. Keep its resolver: redo restores the chip under
+      // the same id, and the effect starts it again.
+      entry.controller = undefined;
+      entry.settled = undefined;
+      return;
+    }
+    pendingMentions.current.delete(id);
     if (
       accepted &&
       valueRef.current.recipients.some((p) => p.pubkey === accepted.pubkey)
