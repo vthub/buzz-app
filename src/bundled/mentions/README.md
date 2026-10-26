@@ -112,7 +112,8 @@ desktop UI test "a failed multi-word directory search keeps its error and
 retry" in [solo-agents.test.tsx](solo-agents.test.tsx) covers this case:
 `@Mary J` fails, then Retry finds Mary Jane. The one case where the client MAY
 skip the search is the refuted prefix in section 6. An `@` inside a mention
-that the user already selected does not open a query.
+that the user already selected, or that is pending (section 5), does not open
+a query.
 
 ## 3. Matching (normative)
 
@@ -231,6 +232,21 @@ does not hold step 1 back; a failed read is not evidence. A name that only a
 directory result has could still gain a namesake from a pending search, so Space
 MUST NOT select it before the search finishes. Otherwise Space is a normal
 space. Tab, Enter, and a click select the highlighted row.
+
+While the client cannot yet decide — the member list, member names or agent
+list is still loading, or a directory search for the query is waiting or
+running — it MAY instead mark the query as a **pending mention**: a chip with
+no recipient, shown as still resolving. When the full choice set is known it
+applies this section to the pending name as if Space had been typed then: a
+selection becomes the recipient (checked for admission as any selection is);
+anything else, including a failed or truncated search or a bounded wait
+expiring (desktop: 8 s), returns the text to prose. A name the client has
+already declined is not pending: a trailing space or punctuation, a multi-word
+query that continues no name, or a saved team with the same or a longer name
+keeps Space a normal space. In a DM a pending name that resolves to someone
+outside the DM returns to prose, since the chooser's "Will not be notified"
+row was never shown. Sending while a mention is pending waits for it. A
+pending mention is never a recipient or a reference (section 8).
 
 ## 6. List stability (desktop behavior; not in the fixtures)
 
@@ -353,6 +369,9 @@ bin/pnpm exec vitest run src/bundled/mentions/mention-ranking.test.ts \
   and [use-mention-choices.ts](use-mention-choices.ts). Directory pages come from
   [useMentionDirectory.ts](useMentionDirectory.ts).
 - Matching, order, and Space: [mention-ranking.ts](mention-ranking.ts).
+  A pending mention is decided by [resolve-space-mention.ts](resolve-space-mention.ts);
+  the host holds and settles the chip in
+  [MessageComposer.tsx](../../features/messages/MessageComposer.tsx).
 - Query syntax: [mention-query.ts](mention-query.ts).
 - Recipient admission (host): [mention-admission.ts](../../features/messages/mention-admission.ts).
   Explicit-choice recency (host): [mention-history.ts](../../features/messages/mention-history.ts).
