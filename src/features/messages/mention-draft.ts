@@ -9,11 +9,21 @@ export type DraftRecipient = MentionRecipient &
   Readonly<{ start: number; end: number }>;
 // Serializable draft metadata must not expose editor implementation types to plugins.
 export type ComposerSnapshot = { version: 1; content: unknown };
+/** A name Space committed before the chooser could decide. The editor resolves
+ * it off-screen into a recipient or back into prose; it is never a recipient. */
+export type PendingMention = Readonly<{
+  id: string;
+  name: string;
+  start: number;
+  end: number;
+}>;
 export type MentionDraft = {
   text: string;
   /** Chat links staged above the editor; serialized with the caption. */
   chatCards?: readonly string[];
   recipients: readonly DraftRecipient[];
+  /** Projection of the live document only; `mentionDraft()` never restores one. */
+  pending?: readonly PendingMention[];
   document?: ComposerSnapshot;
 };
 // The timeline binds a signed name up to the next non-name character, so the

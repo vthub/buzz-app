@@ -7,7 +7,11 @@ import {
 import { bulletList, orderedList, listItem } from "prosemirror-schema-list";
 import { composerLinkUrl } from "./composer-link";
 import { scanMarkdown } from "../relay/message-content";
-import type { MentionDraft, DraftRecipient } from "./mention-draft";
+import type {
+  MentionDraft,
+  DraftRecipient,
+  PendingMention,
+} from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 
 /** The document owns editable marks and exact source tokens. Unimplemented
@@ -95,6 +99,9 @@ export const composerSchema = new Schema<
         recipient: { default: null },
         /** Host-owned `{ uri, label }`; valid only while `source` is its link. */
         resource: { default: null },
+        /** `{ id, name }` while the host resolves a mention Space committed
+         * before the chooser could decide. Never persists past the editor. */
+        pending: { default: null },
         editAsText: { default: false },
       },
       leafText: (node) => node.attrs.source,
@@ -227,6 +234,9 @@ export function readComposerDocument(
       );
       if (node.isText) return node.mark(marks);
       if (node.type.name === "token") {
+        // The resolver died with the previous editor; the typed text stands.
+        if (node.attrs.pending)
+          return composerSchema.text(node.attrs.source, marks);
         const resource = composerResource(node.attrs.resource);
         return node.type.create(
           {
@@ -371,6 +381,7 @@ export function projectComposerDocument(doc: EditorNode) {
   let text = "";
   const positions = new Array<number>(doc.content.size + 1).fill(0);
   const recipients: DraftRecipient[] = [];
+  const pending: PendingMention[] = [];
   const carets: number[] = [];
   const blocks: { from: number; to: number; start: number; code: boolean }[] =
     [];
@@ -435,6 +446,8 @@ export function projectComposerDocument(doc: EditorNode) {
       });
       if (node.attrs.recipient)
         recipients.push({ ...node.attrs.recipient, start, end: text.length });
+      if (node.attrs.pending)
+        pending.push({ ...node.attrs.pending, start, end: text.length });
     }
   });
   for (let i = 1; i < positions.length; i++)
@@ -444,6 +457,7 @@ export function projectComposerDocument(doc: EditorNode) {
     draft: {
       text,
       recipients,
+      ...(pending.length ? { pending } : {}),
       document: { version: 1, content: doc.toJSON() },
     } satisfies MentionDraft,
     positions,

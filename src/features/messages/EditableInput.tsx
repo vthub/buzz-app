@@ -85,6 +85,7 @@ import { macWebKit } from "./mac-webkit";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
+import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./EditableInput.module.css";
 
@@ -150,6 +151,9 @@ function keyboardKey(
     CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
   );
 }
+type PendingChip = { id: string; name: string };
+// Pending chip ids outlive an editor: a host keeps its resolvers across remounts.
+let pendingChips = 0;
 export type EditableInputProps = Omit<
   HTMLAttributes<ComposerInputElement>,
   "onChange" | "onInput"
@@ -219,6 +223,7 @@ export function EditableInput({
       {
         source: string;
         resource: ComposerResource | null;
+        pending: PendingChip | null;
         position(): number | undefined;
       }
     >(),
@@ -659,6 +664,91 @@ export function EditableInput({
       const before = editor.state;
       editor.dispatch(tr);
       return editor.state !== before;
+    };
+    /** The typed `@name` becomes one atom the host resolves later: one undo
+     * step, like a selected mention, and the caret moves past its space. */
+    const insertPendingMention = (
+      name: string,
+      range: { start: number; end: number },
+    ): string | false => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const source = projection();
+      const from = source.position(range.start),
+        to = source.position(range.end, -1);
+      const $from = editor.state.doc.resolve(from);
+      if (
+        !editor.state.selection.empty ||
+        source.source(editor.state.selection.from) !== range.end ||
+        source.draft.text.slice(range.start, range.end) !== `@${name}` ||
+        $from.parent.type.spec.code
+      )
+        return false;
+      const marks = $from.parent.type
+        .allowedMarks(editor.state.storedMarks ?? $from.marks())
+        .filter((mark) => mark.type !== composerSchema.marks.recipient);
+      const id = `pending-${++pendingChips}`;
+      const tr = closeHistory(editor.state.tr).replaceWith(
+        from,
+        to,
+        Fragment.fromArray([
+          composerSchema.nodes.token.create(
+            { source: `@${name}`, pending: { id, name }, editAsText: false },
+            null,
+            marks,
+          ),
+          composerSchema.text(" ", marks),
+        ]),
+      );
+      tr.setSelection(
+        Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
+      );
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      )
+        return false;
+      const before = editor.state;
+      editor.dispatch(tr.scrollIntoView());
+      if (editor.state === before) return false;
+      separateHistory = true;
+      editor.focus();
+      return id;
+    };
+    /** Settling is not an edit: it happens outside history, while sending too,
+     * and a later undo still restores the typed text through it. */
+    const settlePendingMention = (
+      id: string,
+      recipient: MentionRecipient | null,
+    ) => {
+      const token = projection().tokens.find(
+        (token) => token.node.attrs.pending?.id === id,
+      );
+      if (!token) return false;
+      const convert = (person: MentionRecipient | null) =>
+        editor.state.tr
+          .replaceWith(
+            token.from,
+            token.to,
+            person
+              ? composerSchema.nodes.token.create(
+                  { source: `@${person.name}`, recipient: person },
+                  null,
+                  token.node.marks,
+                )
+              : composerSchema.text(token.node.attrs.source, token.node.marks),
+          )
+          .setMeta("composer-normalized", true)
+          .setMeta("addToHistory", false);
+      let tr = convert(recipient);
+      // A longer current name can overrun the limit; the typed text then stands.
+      if (
+        recipient &&
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+          current.current.maxLength
+      )
+        tr = convert(null);
+      editor.dispatch(tr);
+      return true;
     };
     /** True, or the reason shown by the host. The link must survive its context. */
     const insertResource = (value: ComposerResource): true | string => {
@@ -1286,6 +1376,7 @@ export function EditableInput({
             hosts.current.set(dom, {
               source: node.attrs.source,
               resource: node.attrs.resource,
+              pending: node.attrs.pending,
               position: getPos,
             });
             return {
@@ -1725,6 +1816,14 @@ export function EditableInput({
       setSelectionRange: { configurable: true, value: setRange },
       insertText: { configurable: true, value: insert },
       replaceRecipients: { configurable: true, value: replaceRecipients },
+      insertPendingMention: {
+        configurable: true,
+        value: insertPendingMention,
+      },
+      settlePendingMention: {
+        configurable: true,
+        value: settlePendingMention,
+      },
       insertResource: { configurable: true, value: insertResource },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
@@ -1946,8 +2045,18 @@ export function EditableInput({
             item.end === (source ?? 0) + host.source.length,
         );
         return createPortal(
-          host.resource ? (
-            // Host-owned artwork: restore never depends on the providing plugin.
+          // Host-owned artwork: restore never depends on the providing plugin.
+          host.pending ? (
+            <InlineChip
+              address={{ kind: "person", id: host.pending.id }}
+              face={{
+                label: host.pending.name,
+                loading: true,
+                resolved: false,
+              }}
+              interactive={false}
+            />
+          ) : host.resource ? (
             <>
               <span className="sr-only">Resource: </span>
               <span className={styles.resource}>{host.resource.label}</span>

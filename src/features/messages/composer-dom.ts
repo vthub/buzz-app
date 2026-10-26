@@ -88,6 +88,15 @@ export type ComposerInputElement = HTMLDivElement & {
     focus?: boolean,
   ): boolean;
   replaceRecipients(recipients: readonly MentionRecipient[]): boolean;
+  /** Replace the typed `@name` with a chip the host is still resolving; the
+   * returned id names it until `settlePendingMention`. One undo step. */
+  insertPendingMention(
+    name: string,
+    range: { start: number; end: number },
+  ): string | false;
+  /** Turn a pending chip into its recipient, or back into its typed text.
+   * Outside undo history and allowed while sending; false once the chip is gone. */
+  settlePendingMention(id: string, recipient: MentionRecipient | null): boolean;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
   toggleFormat(format: ComposerFormat): void;
