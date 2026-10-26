@@ -1533,17 +1533,15 @@ it("keeps an edited linked draft instead of reinserting its removed source", asy
     "@Member agent Changed request",
   );
 });
-it("tags an agent whose name was typed with Space before the agent inventory loaded", async () => {
+const aaron = { pubkey: "e".repeat(64), name: "Aaron" };
+/** A new Solo chat over the real mentions completion, with the agent
+ * inventory answered by `read`; returns the composer and the `p` tags the
+ * eventual send carried. */
+function soloDraftWithInventory(
+  read: () => Promise<{ definitions: []; identities: [typeof aaron] }>,
+) {
   const test = setup();
-  const aaron = { pubkey: "e".repeat(64), name: "Aaron" };
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const library = createAgentLibrary(async () => {
-    await gate;
-    return { definitions: [], identities: [aaron] };
-  });
+  const library = createAgentLibrary(read);
   const session = {
     ...test.session,
     agentChoices: createAgentChoices({
@@ -1579,31 +1577,78 @@ it("tags an agent whose name was typed with Space before the agent inventory loa
     />,
   );
   const input = screen.getByRole("textbox");
-  const chip = () =>
-    within(input).queryByRole("img", { name: "Resolving mention Aaron" });
+  return {
+    input,
+    chip: () =>
+      within(input).queryByRole("img", { name: "Resolving mention Aaron" }),
+    async send() {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+      const id = test.channelWrites.create.mock.calls[0]?.[0];
+      expect(test.channelWrites.start).toHaveBeenCalledWith(
+        id,
+        expect.any(String),
+        [aaron.pubkey],
+        undefined,
+        false,
+        undefined,
+      );
+      expect(test.messages.send).toHaveBeenCalledWith(id, "@Aaron hi", [
+        aaron.pubkey,
+      ]);
+    },
+    dispose: library.dispose,
+  };
+}
+it("tags an agent whose name was typed with Space before the agent inventory loaded", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const draft = soloDraftWithInventory(async () => {
+    await gate;
+    return { definitions: [], identities: [aaron] };
+  });
   try {
     // Fast typing: the inventory has not answered when Space arrives.
-    await userEvent.type(input, "@Aaron hi");
-    expect(input).toHaveValue("@Aaron hi");
-    expect(chip()).toHaveAttribute("aria-busy", "true");
+    await userEvent.type(draft.input, "@Aaron hi");
+    expect(draft.input).toHaveValue("@Aaron hi");
+    expect(draft.chip()).toHaveAttribute("aria-busy", "true");
     await act(async () => release());
-    await waitFor(() => expect(chip()).toBeNull());
-    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-    const id = test.channelWrites.create.mock.calls[0]?.[0];
-    expect(test.channelWrites.start).toHaveBeenCalledWith(
-      id,
-      expect.any(String),
-      [aaron.pubkey],
-      undefined,
-      false,
-      undefined,
-    );
-    expect(test.messages.send).toHaveBeenCalledWith(id, "@Aaron hi", [
-      aaron.pubkey,
-    ]);
+    await waitFor(() => expect(draft.chip()).toBeNull());
+    await draft.send();
   } finally {
     release();
-    library.dispose();
+    draft.dispose();
+  }
+});
+it("tags an agent whose name was typed with Space while a retry after a failed inventory read loads", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  const draft = soloDraftWithInventory(async () => {
+    if (reads++ === 0) throw new Error("offline");
+    await gate;
+    return { definitions: [], identities: [aaron] };
+  });
+  try {
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Retry agents" }),
+    );
+    // The failed read settled the roster empty; the retry's Space must wait
+    // for the retry, not consume that settled roster.
+    await userEvent.type(draft.input, "@Aaron hi");
+    expect(draft.input).toHaveValue("@Aaron hi");
+    expect(draft.chip()).toHaveAttribute("aria-busy", "true");
+    await act(async () => release());
+    await waitFor(() => expect(draft.chip()).toBeNull());
+    await draft.send();
+  } finally {
+    release();
+    draft.dispose();
   }
 });

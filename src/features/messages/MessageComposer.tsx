@@ -336,24 +336,30 @@ function PersonalComposer(props: MessageComposerProps) {
     ],
   );
   // The agents still loading may include the name a Space was typed for. That
-  // pending mention resolves against the first roster committed once they settle.
+  // pending mention resolves against the first roster committed once they
+  // settle. Each loading period has its own promise: a Retry after a failed
+  // read must not hand out the one the failure settled with an empty roster.
   const loading = choices.pending && choices.status !== "ready";
-  const [settled] = useState(() => {
+  const settling = useRef<{
+    promise: Promise<readonly MentionRecipient[]>;
+    resolve: (roster: readonly MentionRecipient[]) => void;
+  }>(undefined);
+  if (loading && !settling.current) {
     let resolve!: (roster: readonly MentionRecipient[]) => void;
     const promise = new Promise<readonly MentionRecipient[]>((done) => {
       resolve = done;
     });
-    return { promise, resolve };
-  });
+    settling.current = { promise, resolve };
+  }
+  const pending = loading ? settling.current?.promise : undefined;
   useLayoutEffect(() => {
-    if (!loading) settled.resolve(roster);
-  }, [loading, roster, settled]);
+    if (loading || !settling.current) return;
+    settling.current.resolve(roster);
+    settling.current = undefined;
+  }, [loading, roster]);
   const value = useMemo(
-    () => ({
-      recipients: roster,
-      ...(loading ? { pending: settled.promise } : {}),
-    }),
-    [roster, loading, settled],
+    () => ({ recipients: roster, ...(pending ? { pending } : {}) }),
+    [roster, pending],
   );
 
   return (
