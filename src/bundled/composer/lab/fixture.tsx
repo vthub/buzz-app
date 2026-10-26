@@ -57,6 +57,18 @@ const rawSession = {
     subscribe: empty,
     ensure: async () => undefined,
   },
+  directMessages: {
+    // The community directory knows the same four profiles, so a picker
+    // search settles (and is cached) instead of failing.
+    people: async (query: string) => ({
+      people: [...profiles]
+        .filter(([, { name }]) =>
+          name.toLowerCase().startsWith(query.trim().toLowerCase()),
+        )
+        .map(([pubkey, profile]) => ({ pubkey, ...profile })),
+      hasMore: false,
+    }),
+  },
   channels: {
     list: () => channelList,
     subscribeList: empty,

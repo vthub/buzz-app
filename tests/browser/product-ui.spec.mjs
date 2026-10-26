@@ -120,8 +120,15 @@ test("playground distinguishes same-name people and agents in the real composer"
       await playground
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
-      await page
-        .getByRole("dialog", { name: "Mention a member or agent" })
+      const dialog = page.getByRole("dialog", {
+        name: "Mention a member or agent",
+      });
+      await expect(dialog).toBeVisible();
+      // The community search settles after the dialog opens and its status
+      // line leaves the flow above the rows; a click across that moment
+      // lands on two different rows and reaches neither.
+      await expect(dialog.getByText("Searching community…")).toHaveCount(0);
+      await dialog
         .getByRole("button", { name: `${label} ${key}`, exact: true })
         .click();
       labels.push(`@${label}`);
