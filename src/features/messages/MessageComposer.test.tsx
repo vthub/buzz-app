@@ -9960,20 +9960,24 @@ function mountPendingMention() {
     },
   });
   const resolve = vi.fn<CompletionPending["resolve"]>();
+  const publish = () => {
+    const publish = publishes.at(-1);
+    if (!publish) throw new Error("No mention query observed");
+    return publish;
+  };
   return {
     ...h,
     resolve,
     /** How many `@` queries the provider has been mounted for. */
     queries: () => publishes.length,
+    publish,
     /** Type `@name`, publish an undecided result for it, then type Space.
      * Returns the keydown's default-prevented state inverted: false when held. */
     hold(name: string, outcome: Promise<MentionRecipient | null>) {
       resolve.mockImplementation(() => outcome);
       h.fill(`@${name}`);
-      const publish = publishes.at(-1);
-      if (!publish) throw new Error("No mention query observed");
       act(() => {
-        publish({ items: [], spacePending: { name, resolve } });
+        publish()({ items: [], spacePending: { name, resolve } });
       });
       return fireEvent.keyDown(h.input(), { key: " " });
     },
@@ -10143,6 +10147,42 @@ it("keeps the resolver of a chip removed as its resolution landed, so redo settl
   } finally {
     landed.resolve(null);
     restarted.resolve(null);
+  }
+});
+
+it("holds Space as pending when the publication withdrew the displayed exact match as undecided", async () => {
+  const h = mountPendingMention();
+  const outcome = deferred<MentionRecipient | null>();
+  h.resolve.mockImplementation(() => outcome.promise);
+  try {
+    h.fill("@honey");
+    const publish = h.publish();
+    act(() => {
+      publish({
+        items: [{ id: first.pubkey, label: "Honey", edit: { mention: first } }],
+        spaceId: first.pubkey,
+      });
+    });
+    expect(screen.getByRole("option", { name: "Honey" })).toBeVisible();
+    act(() => {
+      // The display is not overruled by another recipient; the decision is
+      // deferred to the resolver under the full rule.
+      publish({
+        items: [],
+        spacePending: { name: "honey", resolve: h.resolve },
+      });
+      expect(fireEvent.keyDown(h.input(), { key: " " })).toBe(false);
+    });
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    expect(h.resolve).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+  } finally {
+    outcome.resolve(null);
   }
 });
 

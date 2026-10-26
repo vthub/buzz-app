@@ -326,6 +326,9 @@ function OwnedCompletion({
       }
       // Undecided, not declined: the provider is still gathering evidence, so
       // the host may hold the name as a pending mention and resolve it later.
+      // This includes a display whose exact match the publication withdrew
+      // as undecided: no other recipient overrules what the user saw, the
+      // decision is deferred to the resolver under the full rule.
       if (
         event.key === terminator &&
         published?.spacePending &&
