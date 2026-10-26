@@ -245,10 +245,16 @@ export type CompletionQuery = Readonly<{
  * name to prose. `resolve` is headless: the provider has unmounted by then. */
 export type CompletionPending = Readonly<{
   name: string;
-  resolve(
-    signal: AbortSignal,
-  ): Promise<Readonly<{ pubkey: string; name: string }> | null>;
+  resolve(signal: AbortSignal): Promise<CompletionResolution>;
 }>;
+/** The recipient; null for prose; or, when only longer known names kept the
+ * name from selecting over the complete choice set, those names, each
+ * resolvable under the same rule. The host may extend the chip over the words
+ * typed after it when they complete one of them, and ask that one. */
+export type CompletionResolution =
+  | Readonly<{ pubkey: string; name: string }>
+  | Readonly<{ continued: readonly CompletionPending[] }>
+  | null;
 export type CompletionEdit =
   | Readonly<{
       text: string;

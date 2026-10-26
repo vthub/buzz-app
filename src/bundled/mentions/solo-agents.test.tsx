@@ -43,6 +43,7 @@ import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
 import {
   MENTION_RESOLVE_TIMEOUT_MS,
   resolveSpaceMention,
+  type SpaceMentionResolution,
 } from "./resolve-space-mention";
 import { createProfileDirectory } from "../../features/relay/profile-directory";
 import type { RelayEvent } from "../../features/relay/events";
@@ -3109,10 +3110,19 @@ it.each([
     recipient: null,
   },
   {
+    // Only a longer name kept it from selecting: the host may extend the chip.
     case: "a longer name",
     page: {
       people: [{ pubkey: outsideJose, name: "Jose Luis" }],
       hasMore: false,
+    },
+    recipient: { continued: ["Jose Luis"] },
+  },
+  {
+    case: "a longer name on a truncated page",
+    page: {
+      people: [{ pubkey: outsideJose, name: "Jose Luis" }],
+      hasMore: true,
     },
     recipient: null,
   },
@@ -3133,12 +3143,93 @@ it.each([
       // once, with no typing pause.
       await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
       await (page === "error" ? h.fail() : h.finish(page));
-      await expect(pending).resolves.toEqual(recipient);
+      expect(outcomeOf(await pending)).toEqual(recipient);
     } finally {
       h.dispose();
     }
   },
 );
+/** A resolution for assertions: the recipient, null, or the continuing names. */
+const outcomeOf = (outcome: SpaceMentionResolution | undefined) =>
+  outcome && "continued" in outcome
+    ? { continued: outcome.continued.map((c) => c.name) }
+    : outcome;
+const continuedOf = (outcome: SpaceMentionResolution) => {
+  if (!outcome || !("continued" in outcome))
+    throw new Error(`Not continued: ${JSON.stringify(outcome)}`);
+  return outcome.continued;
+};
+it("the resolver's continuing names each resolve under the same rule over the page already read", async () => {
+  const h = spaceFixture("Member");
+  try {
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+    const pending = resolver(h);
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
+    const garcia = { pubkey: "e".repeat(64), name: "Jose Luis Garcia" };
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose Luis" }, garcia],
+      hasMore: false,
+    });
+    const continued = continuedOf(await pending);
+    expect(continued.map((c) => c.name)).toEqual([
+      "Jose Luis",
+      "Jose Luis Garcia",
+    ]);
+    const signal = new AbortController().signal;
+    // `Jose Luis` is itself continued; the longest name selects.
+    expect(outcomeOf(await continued[0]?.resolve(signal))).toEqual({
+      continued: ["Jose Luis Garcia"],
+    });
+    await expect(continued[1]?.resolve(signal)).resolves.toEqual(garcia);
+    await expect(
+      continued[1]?.resolve(AbortSignal.abort()),
+    ).resolves.toBeNull();
+    // Every name that equals or continues a longer name is on the page for
+    // its prefix, so no further read is needed.
+    expect(h.people).toHaveBeenCalledTimes(2);
+  } finally {
+    h.dispose();
+  }
+});
+it("the resolver's continuing name in a DM resolves to prose when it is an outsider", async () => {
+  const h = spaceFixture("Member", {}, { dm: true });
+  try {
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+    const pending = resolver(h);
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose Luis" }],
+      hasMore: false,
+    });
+    const continued = continuedOf(await pending);
+    expect(continued.map((c) => c.name)).toEqual(["Jose Luis"]);
+    await expect(
+      continued[0]?.resolve(new AbortController().signal),
+    ).resolves.toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
+it("the resolver continues a roster name into the roster's longer name without the directory", async () => {
+  const h = spaceFixture("Jose");
+  try {
+    const luis = { pubkey: outsideJose, name: "Jose Luis" };
+    const scope = {
+      channelId: "parent",
+      roster: { recipients: [{ pubkey: h.member, name: "Josefa" }, luis] },
+      selected: [],
+    };
+    const signal = new AbortController().signal;
+    const continued = continuedOf(
+      await resolveSpaceMention(h.session, scope, "jose", signal),
+    );
+    expect(continued.map((c) => c.name)).toEqual(["Jose Luis"]);
+    await expect(continued[0]?.resolve(signal)).resolves.toEqual(luis);
+    expect(h.people).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
 it("the resolver reads a page the chooser already settled from the shared cache", async () => {
   const h = spaceFixture("Member");
   try {

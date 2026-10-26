@@ -231,13 +231,10 @@ export function EditableInput({
   const [, refresh] = useState(0);
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
-  /** Settles that landed during an IME composition, applied when it ends. */
+  /** Pending-chip settles and extensions that landed during an IME
+   * composition, applied when it ends. */
   const heldSettles = useRef<
-    {
-      id: string;
-      recipient: MentionRecipient | null;
-      resolve(applied: boolean): void;
-    }[]
+    { apply(): boolean; resolve(applied: boolean): void }[]
   >([]);
   const pointing = useRef(false);
   const nativeEditing = useRef(false);
@@ -741,12 +738,13 @@ export function EditableInput({
       // `composing` stays set after a composition that ended while the view
       // was not editable (a Send under the IME), and a settle held on it
       // would wait for a compositionend that never comes.
-      if (composing.current)
-        return new Promise((resolve) => {
-          heldSettles.current.push({ id, recipient, resolve });
-        });
+      if (composing.current) return hold(() => applySettle(id, recipient));
       return applySettle(id, recipient);
     };
+    const hold = (apply: () => boolean) =>
+      new Promise<boolean>((resolve) => {
+        heldSettles.current.push({ apply, resolve });
+      });
     const applySettle = (id: string, recipient: MentionRecipient | null) => {
       const token = pendingToken(id);
       if (!token) return false;
@@ -774,6 +772,45 @@ export function EditableInput({
       )
         tr = convert(null);
       editor.dispatch(tr);
+      return true;
+    };
+    /** The words typed after a pending chip that complete a longer known name
+     * join the chip, which the host then resolves under the whole name. Like a
+     * settle: outside history, while sending too, held under a composition. */
+    const extendPendingMention = (
+      id: string,
+      remainder: string,
+    ): boolean | Promise<boolean> => {
+      if (!remainder || !pendingToken(id)) return false;
+      if (composing.current) return hold(() => applyExtend(id, remainder));
+      return applyExtend(id, remainder);
+    };
+    const applyExtend = (id: string, remainder: string) => {
+      const token = pendingToken(id);
+      if (!token) return false;
+      const pending: PendingChip = token.node.attrs.pending;
+      const after = editor.state.doc.resolve(token.to).nodeAfter;
+      // The host read the words from the draft; they may have changed since.
+      if (!after?.isText || !after.text?.startsWith(remainder)) return false;
+      const name = pending.name + remainder;
+      // Two steps, so the typed text stays the undo target: the chip changes
+      // in place (one atom for one atom, as a settle does) and the words after
+      // it leave separately.
+      editor.dispatch(
+        editor.state.tr
+          .replaceWith(
+            token.from,
+            token.to,
+            composerSchema.nodes.token.create(
+              { source: `@${name}`, pending: { id, name }, editAsText: false },
+              null,
+              token.node.marks,
+            ),
+          )
+          .delete(token.to, token.to + remainder.length)
+          .setMeta("composer-normalized", true)
+          .setMeta("addToHistory", false),
+      );
       return true;
     };
     /** True, or the reason shown by the host. The link must survive its context. */
@@ -1850,6 +1887,10 @@ export function EditableInput({
         configurable: true,
         value: settlePendingMention,
       },
+      extendPendingMention: {
+        configurable: true,
+        value: extendPendingMention,
+      },
       insertResource: { configurable: true, value: insertResource },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
@@ -1927,7 +1968,7 @@ export function EditableInput({
         // the next click. The composition has ended all the same, so the
         // replay, like the hold above, does not consult that flag.
         for (const held of heldSettles.current.splice(0))
-          held.resolve(applySettle(held.id, held.recipient));
+          held.resolve(held.apply());
       },
       sync(next, reset = false) {
         if (

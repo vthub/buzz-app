@@ -102,6 +102,15 @@ export type ComposerInputElement = HTMLDivElement & {
     id: string,
     recipient: MentionRecipient | null,
   ): boolean | Promise<boolean>;
+  /** Extend a pending chip over `remainder`, the text right after it, into one
+   * chip named by both: the host matched the words typed after the chip to a
+   * longer known name. Outside undo history and allowed while sending, held
+   * under an IME composition like a settle; false once the chip is gone or the
+   * text after it no longer begins with `remainder`. */
+  extendPendingMention(
+    id: string,
+    remainder: string,
+  ): boolean | Promise<boolean>;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
   toggleFormat(format: ComposerFormat): void;

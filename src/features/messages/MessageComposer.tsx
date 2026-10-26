@@ -94,10 +94,12 @@ import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
   legacyFollowupDraft,
+  mentionBoundary,
   mentionDraft,
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
+import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
@@ -1259,12 +1261,56 @@ function Composer({
     if (!entry.controller) {
       const controller = new AbortController();
       entry.controller = controller;
-      entry.settled = entry.resolve(controller.signal).then(
-        (recipient) => settlePendingMention(id, recipient, controller.signal),
-        () => settlePendingMention(id, null, controller.signal),
-      );
+      entry.settled = resolveChip(id, entry.resolve, controller.signal);
     }
     return entry.settled;
+  }
+  /** One resolution per chip, through the longer names it continues into:
+   * a chip whose name only longer known names kept from selecting extends
+   * over the words typed after it when they complete one, and that name is
+   * resolved under the same signal. Anything else returns it to prose. */
+  async function resolveChip(
+    id: string,
+    resolve: CompletionPending["resolve"],
+    signal: AbortSignal,
+  ): Promise<void> {
+    const outcome = await resolve(signal).catch(() => null);
+    if (signal.aborted) return;
+    if (!outcome || !("continued" in outcome))
+      return settlePendingMention(id, outcome, signal);
+    const next = typedContinuation(id, outcome.continued);
+    const extended =
+      next &&
+      (await Promise.resolve(
+        input.current?.extendPendingMention(id, next.remainder) ?? false,
+      ));
+    if (signal.aborted) return;
+    if (next && extended) return resolveChip(id, next.resolve, signal);
+    return settlePendingMention(id, null, signal);
+  }
+  /** The longest of `continued` that the chip's name plus the words typed
+   * after it, up to a name boundary, spell: the name Space would have needed
+   * typed in full. None when the words complete no name or stop mid-word. */
+  function typedContinuation(
+    id: string,
+    continued: readonly CompletionPending[],
+  ) {
+    const chip = valueRef.current.pending?.find((item) => item.id === id);
+    if (!chip) return undefined;
+    const { text } = valueRef.current;
+    const names = new Map(continued.map((c) => [normalizeName(c.name), c]));
+    const longest = Math.max(...[...names.keys()].map((n) => n.length));
+    let found:
+      | { remainder: string; resolve: CompletionPending["resolve"] }
+      | undefined;
+    for (let end = chip.end + 1; end <= text.length; end++) {
+      const remainder = text.slice(chip.end, end);
+      const name = normalizeName(chip.name + remainder);
+      if (name.length > longest) break;
+      const next = mentionBoundary(text, end) ? names.get(name) : undefined;
+      if (next) found = { remainder, resolve: next.resolve };
+    }
+    return found;
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reconciles resolvers against the chips in the draft; the helpers read current refs.
   useEffect(() => {
@@ -1709,9 +1755,11 @@ function Composer({
     if (valueRef.current.pending?.length) {
       // Enter straight after Space is the case a pending mention exists for.
       // Wait for its recipient rather than send prose; the composer shows
-      // its sending state meanwhile. The wait is bounded by the resolver
-      // plus an IME composition that was already open when Send was clicked,
-      // since a settle landing under it is held until the composition ends.
+      // its sending state meanwhile. The wait is bounded by the resolver,
+      // once more for a chip that extends over a longer name it continued
+      // into (`resolveChip`), plus an IME composition that was already open
+      // when Send was clicked, since a settle landing under it is held until
+      // the composition ends.
       const wait = new AbortController();
       sendAttempt.current = wait;
       setSending(true);

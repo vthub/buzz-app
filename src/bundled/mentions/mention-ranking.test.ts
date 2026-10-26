@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   continuedMention,
+  continuingNames,
   exactMention,
   rankMentions,
   type MentionChoice,
@@ -130,6 +131,14 @@ it("a known longer name continues the query, except an identity's own beside its
   const longer = choice("1", "Mira Example");
   expect(continuedMention([longer], "mira")).toBe(true);
   expect(continuedMention([longer], "Mira Example")).toBe(false);
+  // The continuing names, each once, for a pending mention to extend over.
+  expect(
+    continuingNames(
+      [longer, choice("5", "Mira Example"), choice("6", "Mira Example Two")],
+      "mira",
+    ),
+  ).toEqual(["Mira Example", "Mira Example Two"]);
+  expect(continuingNames([longer], "Mira Example")).toEqual([]);
   // Section 5's exception: `Example Agent` is another name of the `Example`
   // agent, not a namesake, so it neither continues nor blocks `example`.
   const self = choice("2", "Example", {

@@ -401,7 +401,10 @@ holds the name as a pending chip (a spinner in place of its `@`) and applies the
 same rule once the evidence arrives, within 8 s, or returns it to prose; sending
 waits for a pending chip. A name already known to continue the query (`Mira
 Example` for `mira`) is a declined Space, not a pending one, so the next word
-can still complete it. Editing a
+can still complete it; a longer name learned only after the chip was held
+extends the chip over the words typed after it when they complete exactly one
+such name (`@mira Example hi` tags `Mira Example`), and otherwise returns it
+to prose. Editing a
 selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
@@ -486,8 +489,10 @@ stores only `{pubkey, name}`; qualifiers are presentation, not wire data. A Spac
 the chooser cannot decide yet, because its evidence is still loading, holds the
 name as a pending chip that the plugin's headless resolver settles by the same
 rule (`resolve-space-mention.ts`); a known longer name declines Space outright
-rather than holding it; the host admits the result like any selection,
-and a pending chip is never stored in a draft or sent as a tag.
+rather than holding it, while one found after the chip was held extends the
+chip over the typed words that complete it or returns it to prose; the host
+admits the result like any selection, and a pending chip is never stored in a
+draft or sent as a tag.
 
 The composer rejects already-known archived recipients (never the viewer) at
 send entry. The next draft keeps only agents that the sent message notified. This is not an archive transaction: archive

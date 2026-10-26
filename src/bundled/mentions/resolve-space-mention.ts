@@ -6,6 +6,7 @@ import { allowsOutsideMentions } from "../../features/messages/mention-admission
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import type { MentionRoster } from "../../features/messages/draft-mention-roster";
 import { mentionCandidates } from "./mention-candidates";
+import { continuingNames } from "./mention-ranking";
 import { namedCandidates, spaceMention } from "./use-mention-choices";
 import { teamBlocksSpace } from "./use-team-mentions";
 import {
@@ -31,17 +32,33 @@ export type SpaceMentionScope = {
 };
 
 /**
- * The recipient Space would have selected for `name` had the chooser's
- * evidence been complete (README section 5), or null to return it to prose.
- * Headless: the chooser that published it unmounted when the chip replaced
- * the typed text. Any failure, the caller's abort or the timeout is null.
+ * What Space would have done with `name` had the chooser's evidence been
+ * complete (README section 5): the recipient it selects; null to return the
+ * text to prose; or, when only longer known names continue the name over the
+ * complete choice set, those names, each resolvable under the same rule
+ * (`continued`). The words typed after the chip may complete one of them, and
+ * the host asks that one. A truncated page, a namesake, a team block, a DM
+ * outsider, any failure, the caller's abort or the timeout is null.
+ */
+export type SpaceMentionResolution =
+  | MentionRecipient
+  | { continued: readonly ContinuedSpaceMention[] }
+  | null;
+export type ContinuedSpaceMention = {
+  name: string;
+  resolve(signal: AbortSignal): Promise<SpaceMentionResolution>;
+};
+
+/**
+ * Headless: the chooser that published the pending name unmounted when the
+ * chip replaced the typed text.
  */
 export async function resolveSpaceMention(
   session: ComposerSession,
   scope: SpaceMentionScope,
   name: string,
   signal: AbortSignal,
-): Promise<MentionRecipient | null> {
+): Promise<SpaceMentionResolution> {
   if (signal.aborted) return null;
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -70,7 +87,7 @@ async function resolve(
   { channelId, inviteAgents, roster: draft, selected }: SpaceMentionScope,
   name: string,
   signal: AbortSignal,
-): Promise<MentionRecipient | null> {
+): Promise<SpaceMentionResolution> {
   // A roster's owner says when its agents have loaded, as the inventory
   // wait below does for a channel.
   const roster = draft?.pending ? await draft.pending : draft?.recipients;
@@ -120,10 +137,12 @@ async function resolve(
   const missingNames = channel?.members?.some(
     (key) => !profiles.has(key) && !unnamed?.has(key),
   );
-  const pick = (
+  const decide = (
     people: MentionDirectoryPage["people"],
     complete: boolean,
-  ): MentionRecipient | null => {
+    query: string,
+  ): SpaceMentionResolution => {
+    if (kit && teamBlocksSpace(kit.snapshot(), query)) return null;
     const choices = namedCandidates(
       session,
       channelId,
@@ -132,22 +151,39 @@ async function resolve(
       selected,
       people,
     );
-    const pubkey = spaceMention(choices, local, name, {
+    const pubkey = spaceMention(choices, local, query, {
       pending: false,
       missingNames,
       complete,
     });
     const choice = choices.find((c) => c.recipient.pubkey === pubkey);
-    if (!choice) return null;
-    // Nobody can be added to a DM, and the chooser row that says "Will not
-    // be notified" was never shown: a chip must not promise a notification.
-    if (channel?.channelType === "dm" && !members.includes(pubkey ?? ""))
-      return null;
-    return choice.recipient;
+    if (choice) {
+      // Nobody can be added to a DM, and the chooser row that says "Will not
+      // be notified" was never shown: a chip must not promise a notification.
+      if (
+        channel?.channelType === "dm" &&
+        !members.includes(choice.recipient.pubkey)
+      )
+        return null;
+      return choice.recipient;
+    }
+    if (!complete) return null;
+    // Over the complete set a longer name is the first thing the rule checks,
+    // so these are what kept the name from selecting. Each resolves over the
+    // same set: every name that equals or continues it also continues `query`.
+    const longer = continuingNames(choices, query);
+    if (!longer.length) return null;
+    return {
+      continued: longer.map((name) => ({
+        name,
+        resolve: async (signal: AbortSignal) =>
+          signal.aborted ? null : decide(people, true, name),
+      })),
+    };
   };
   // Once every member is named, an exact local name selects without the
   // directory, as it does in the chooser.
-  const direct = pick([], false);
+  const direct = decide([], false, name);
   if (direct) return direct;
   const outside =
     !roster &&
@@ -155,11 +191,11 @@ async function resolve(
     allowsOutsideMentions(channel) &&
     !channel?.archived &&
     !channel?.readOnly;
-  if (!outside) return pick([], true);
+  if (!outside) return decide([], true, name);
   const page = await fetchMentionDirectoryPage(session, name, signal);
   // A truncated page may hide a namesake, as it does for Space in the chooser.
   if (signal.aborted || page.more) return null;
-  return pick(page.people, true);
+  return decide(page.people, true, name);
 }
 
 /** Resolves once `done` holds for the store's snapshot; rejects on abort. */

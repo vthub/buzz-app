@@ -85,24 +85,24 @@ export function rankMentions(
 }
 const choiceNames = (c: MentionChoice) => [...c.aliases, c.label];
 /**
- * A known choice's name continues the query (README section 5), so no exact
- * name can be selected. A key qualifier or generated `(agent)` suffix only
- * tells namesakes apart, so it never continues the name. Nor does a choice's
- * own longer name when that same choice also has the exact name: one identity
- * is not its own namesake. Choices only arrive, never leave, so once this
- * holds over the known set nothing that loads later can lift it: Space is
- * declined, not pending.
+ * The known names that continue the query (README section 5), each once,
+ * so no exact name can be selected while any exists. A key qualifier or
+ * generated `(agent)` suffix only tells namesakes apart, so it never
+ * continues the name. Nor does a choice's own longer name when that same
+ * choice also has the exact name: one identity is not its own namesake.
+ * Choices only arrive, never leave, so once a name continues the query
+ * nothing that loads later can lift it: Space is declined, not pending.
  */
-export function continuedMention(
+export function continuingNames(
   choices: readonly MentionChoice[],
   query: string,
 ) {
   const needle = normalized(query);
-  return choices.some((c) => {
+  const names = new Map<string, string>();
+  for (const c of choices) {
     // `Example Agent` never keeps `example` from selecting the agent that is
     // also named `Example`.
-    if (choiceNames(c).some((name) => normalized(name) === needle))
-      return false;
+    if (choiceNames(c).some((name) => normalized(name) === needle)) continue;
     const label =
       c.qualifier && c.label.endsWith(` · ${c.qualifier}`)
         ? c.label.slice(0, -(c.qualifier.length + 3))
@@ -112,9 +112,16 @@ export function continuedMention(
       c.agent && c.aliases.some((name) => `${name.trim()} (agent)` === label)
         ? c.aliases
         : [...c.aliases, label];
-    return longer.some((name) => extendsName(name, needle));
-  });
+    for (const name of longer)
+      if (extendsName(name, needle) && !names.has(normalized(name)))
+        names.set(normalized(name), name.trim());
+  }
+  return [...names.values()];
 }
+export const continuedMention = (
+  choices: readonly MentionChoice[],
+  query: string,
+) => continuingNames(choices, query).length > 0;
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
  * Every choice can continue the name (`continuedMention`); only choices
