@@ -461,6 +461,25 @@ export class CodexRuntime {
     );
     for (const listener of this.listeners) listener();
   }
+  private readonly retirements = new Map<string, Promise<void>>();
+  async retire(pubkey: string) {
+    let retiring = this.retirements.get(pubkey);
+    if (!retiring) {
+      retiring = (async () => {
+        const entry = this.entries.get(pubkey);
+        if (entry) {
+          entry.abort.abort();
+          this.entries.delete(pubkey);
+          this.views.delete(pubkey);
+          if (this.server) this.stop(this.server, pubkey, entry);
+        }
+        await this.stopping.get(pubkey);
+      })();
+      this.retirements.set(pubkey, retiring);
+    }
+    await retiring;
+    this.retirements.delete(pubkey);
+  }
   sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.key));
     for (const key of this.previews.keys())

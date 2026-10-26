@@ -39,6 +39,20 @@ export function appClient(
   };
   const handoff = agent.handoff;
   return {
+    ...(agent.protection
+      ? {
+          protect: async (
+            action: import("../features/agent-protection/service").ProtectionAction,
+          ) => {
+            check();
+            await agent.protection?.check(
+              action,
+              options.signal ?? new AbortController().signal,
+            );
+            check();
+          },
+        }
+      : {}),
     pubkey: agent.pubkey,
     key: agent.key,
     owner: agent.owner,

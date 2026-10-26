@@ -39,6 +39,10 @@ export type NipOaAuthorization = readonly [
   conditions: string,
   signature: string,
 ];
+export type ProcessProtection = Readonly<{
+  readOnlyPaths: readonly string[];
+  hiddenPaths: readonly string[];
+}>;
 export type HostProcessOptions = Readonly<{
   /** Follow the arguments the manifest declares. */
   args?: readonly string[];
@@ -48,6 +52,8 @@ export type HostProcessOptions = Readonly<{
   env?: Readonly<Record<string, string | null>>;
   /** Run with one app-held MCP session and an agent-scoped `buzz` on PATH. */
   mcp?: Pick<HostMcpServer, "url" | "headers">;
+  /** Native macOS containment for a protected worker and its descendants. */
+  protection?: ProcessProtection;
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;
@@ -243,6 +249,7 @@ export class HostService extends Service implements Host {
       cwd: options.cwd ?? null,
       env: options.env ?? null,
       mcp: options.mcp ?? null,
+      protection: options.protection ?? null,
       onEvent,
     });
     // The host takes at most 1 MiB a write, so a longer one goes in pieces,

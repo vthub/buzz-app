@@ -29,7 +29,7 @@ export type FakeProcess = {
   /** Calls one of the plugin's tools and resolves with its answer. */
   tool(
     params: object,
-    method?: "tool" | "prompt",
+    method?: "tool" | "prompt" | "security",
   ): Promise<{ result?: unknown; error?: string }>;
   /** Exits, saying `stderr` last. */
   exit(code: number | null, stderr?: string): void;
@@ -37,7 +37,7 @@ export type FakeProcess = {
 
 export function fakeHost(
   handlers: Readonly<Record<string, Handler>> = {},
-  options: Readonly<{ ready?: boolean }> = {},
+  options: Readonly<{ ready?: boolean; close?: boolean }> = {},
 ) {
   const processes: FakeProcess[] = [];
   const spawn = async (
@@ -102,7 +102,8 @@ export function fakeHost(
         buffer = buffer.slice(newline + 1);
         newline = buffer.indexOf("\n");
         // The first line is the launcher's: what it installs and runs.
-        if (!process.launched) process.launched = message;
+        if (!process.launched && !spawnOptions.protection)
+          process.launched = message;
         else if (message.method) void handle(message);
         else {
           answers.get(message.id)?.(message);
@@ -116,6 +117,7 @@ export function fakeHost(
       write,
       end: async () => {
         process.ended = true;
+        if (options.close) process.exit(0);
       },
       kill: async () => {
         process.killed = true;

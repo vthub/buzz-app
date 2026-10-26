@@ -1104,7 +1104,7 @@ fn the_plain_list_older_builds_edit_holds_the_agent_s_name_type_and_rows() {
 fn refuses_an_unknown_list_version() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("identities.json");
-    std::fs::write(&path, r#"{"version":3,"agents":[]}"#).unwrap();
+    std::fs::write(&path, r#"{"version":99,"agents":[]}"#).unwrap();
     assert!(AppAgents::open(path).list().is_err());
 }
 
@@ -1202,4 +1202,239 @@ fn a_save_cut_short_leaves_a_new_membership_with_its_key() {
             serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
         assert!(plain.iter().any(|row| row.pubkey == pubkey));
     }
+}
+
+#[test]
+fn protection_is_committed_with_identity_and_changed_with_revision_and_provider_ownership() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let agents = AppAgents::open(dir.path().join("agents/identities.json"));
+    let binding = ProtectionBinding {
+        provider: "security.test".into(),
+        policy: serde_json::json!({"mode":"human"}),
+    };
+    agents
+        .set_protection_defaults(&owner(), 0, "security.test", Some(binding.policy.clone()))
+        .unwrap();
+    let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Ada").unwrap();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+    let (agent, _) = agents.commit(prepared, &auth, &credentials).unwrap();
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap().protection, Some(binding));
+    assert_eq!(agent.protection_revision, 0);
+    let other = AppAgents::open(agents.path.clone());
+    assert!(other
+        .set_protection(&agent.pubkey, 0, "other.plugin", None)
+        .is_err());
+    agents
+        .set_protection(
+            &agent.pubkey,
+            0,
+            "security.test",
+            Some(serde_json::json!({"mode":"delegate"})),
+        )
+        .unwrap();
+    assert!(other
+        .set_protection(&agent.pubkey, 0, "security.test", None)
+        .is_err());
+    assert!(other
+        .set_protection(&agent.pubkey, 1, "bad/plugin", None)
+        .is_err());
+    assert!(other
+        .set_protection(
+            &agent.pubkey,
+            1,
+            "security.test",
+            Some(serde_json::json!([]))
+        )
+        .is_err());
+    assert_eq!(other.get(&agent.pubkey, RELAY).unwrap().protection_revision, 1);
+    other
+        .set_protection(&agent.pubkey, 1, "security.test", None)
+        .unwrap();
+    assert!(agents.get(&agent.pubkey, RELAY).unwrap().protection.is_none());
+    assert!(agent.read_key(&credentials).is_ok());
+}
+
+#[test]
+fn malformed_saved_protection_never_becomes_an_unprotected_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, _) = created(dir.path(), &credentials);
+    let original = serde_json::to_value(agents.list().unwrap()).unwrap();
+    for binding in [
+        serde_json::json!({"provider":"bad/plugin","policy":{}}),
+        serde_json::json!({"provider":"security.test","policy":null}),
+    ] {
+        let mut saved = original.clone();
+        saved[0]["protection"] = binding;
+        std::fs::write(&agents.path, saved.to_string()).unwrap();
+        assert!(agents.list().is_err());
+    }
+    let mut saved = original;
+    saved[0]["protectionRevision"] = serde_json::json!(9_007_199_254_740_992_u64);
+    std::fs::write(&agents.path, saved.to_string()).unwrap();
+    assert!(agents.list().is_err());
+}
+
+#[test]
+fn defaults_are_native_authority_even_for_an_already_prepared_creation_in_another_app() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let path = dir.path().join("agents/identities.json");
+    let first = AppAgents::open(path.clone());
+    let second = AppAgents::open(path);
+    let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Ada").unwrap();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+    first
+        .set_protection_defaults(
+            &owner(),
+            0,
+            "security.test",
+            Some(serde_json::json!({"mode":"human"})),
+        )
+        .unwrap();
+    assert!(second
+        .set_protection_defaults(&owner(), 0, "security.test", None)
+        .is_err());
+    assert!(second
+        .set_protection_defaults(&owner(), 1, "other.plugin", None)
+        .is_err());
+    let (created, _) = second.commit(prepared, &auth, &credentials).unwrap();
+    assert_eq!(created.protection.unwrap().provider, "security.test");
+    first
+        .set_protection_defaults(&owner(), 1, "security.test", None)
+        .unwrap();
+    assert!(second
+        .protection_defaults(&owner())
+        .unwrap()
+        .defaults
+        .is_none());
+    assert_eq!(second.protection_defaults(&owner()).unwrap().revision, 2);
+    std::fs::write(first.defaults_path(), "invalid").unwrap();
+    let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Bea").unwrap();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+    assert!(second.commit(prepared, &auth, &credentials).is_err());
+}
+
+#[test]
+fn failed_credential_creation_cleans_up_even_if_defaults_become_malformed() {
+    struct Refuse {
+        memory: Memory,
+        defaults: PathBuf,
+    }
+    impl Credentials for Refuse {
+        fn read_legacy(&self, source: crate::LegacySource, id: &str) -> Result<Secret> {
+            self.memory.read_legacy(source, id)
+        }
+        fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>> {
+            self.memory.read(id, pubkey)
+        }
+        fn add(&self, _id: &str, _key: &Secret) -> Result<()> {
+            std::fs::write(&self.defaults, "invalid").unwrap();
+            Err("refused".into())
+        }
+        fn delete(&self, id: &str, pubkey: &str) -> Result<()> {
+            self.memory.delete(id, pubkey)
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let agents = AppAgents::open(dir.path().join("identities.json"));
+    let prepared = AppAgents::prepare("wss://relay.example", &owner(), "p/t", "Ada").unwrap();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+    let credentials = Refuse {
+        memory: Memory::default(),
+        defaults: agents.defaults_path(),
+    };
+    assert!(agents.commit(prepared, &auth, &credentials).is_err());
+    assert!(agents.list().unwrap().is_empty());
+}
+
+#[test]
+fn protection_is_atomic_across_memberships_and_joining_preserves_the_source_policy() {
+    const OTHER: &str = "wss://other.example";
+    const THIRD: &str = "wss://third.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let original = serde_json::json!({"mode":"human"});
+    agents.set_protection(&agent.pubkey, 0, "security.test", Some(original.clone())).unwrap();
+    agents.join(&agent.pubkey, RELAY, OTHER, None, &credentials).unwrap();
+    agents.set_protection_defaults(&owner(), 0, "security.test", Some(serde_json::json!({"mode":"delegate"}))).unwrap();
+    let third = agents.join(&agent.pubkey, OTHER, THIRD, None, &credentials).unwrap();
+    assert_eq!(third.protection.as_ref().unwrap().policy, original);
+    assert_eq!(third.protection_revision, 1);
+    // A Join paused between saving its row and key must receive the same policy.
+    let mut saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    saved["agents"][2]["joining"] = true.into();
+    std::fs::write(&agents.path, saved.to_string()).unwrap();
+    agents.set_protection(&agent.pubkey, 1, "security.test", None).unwrap();
+    assert!(agents.list().unwrap().iter().all(|row| row.protection.is_none() && row.protection_revision == 2));
+    assert!(agents.set_protection(&agent.pubkey, 1, "security.test", Some(original)).is_err());
+    saved = serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    saved["agents"][1]["protectionRevision"] = 1.into();
+    std::fs::write(&agents.path, saved.to_string()).unwrap();
+    assert!(agents.list().is_err());
+}
+
+#[test]
+fn protected_identity_envelope_is_sticky_and_ignores_old_membership_sidecars() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    agents.set_protection(&agent.pubkey, 0, "security.test", Some(serde_json::json!({}))).unwrap();
+    agents.join(&agent.pubkey, RELAY, "wss://other.example", None, &credentials).unwrap();
+    agents.set_protection(&agent.pubkey, 1, "security.test", None).unwrap();
+    std::fs::write(agents.joined(), "malformed stale sidecar").unwrap();
+    agents.upgrade().unwrap();
+    agents.rename(&agent.pubkey, "Renamed").unwrap();
+    assert_eq!(agents.list().unwrap().len(), 2);
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    assert_eq!(saved["version"], PROTECTED_IDENTITIES);
+    assert_eq!(saved["agents"].as_array().unwrap().len(), 2);
+    // The old plain-list reader cannot silently drop the protection fields.
+    assert!(serde_json::from_value::<Vec<OlderRow>>(saved).is_err());
+}
+
+#[test]
+fn defaults_install_the_old_reader_barrier_before_activation_even_without_agents() {
+    for fail_at in [0, 1, 2] {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = AppAgents::open(dir.path().join("agents/identities.json"));
+        FAIL_RENAME.set(fail_at);
+        let result = agents.set_protection_defaults(&owner(), 0, "security.test", Some(serde_json::json!({})));
+        assert_eq!(FAIL_RENAME.get(), 0);
+        let defaults = agents.protection_defaults(&owner()).unwrap();
+        if fail_at == 0 {
+            result.unwrap();
+            assert!(defaults.defaults.is_some());
+        } else {
+            assert!(result.is_err());
+            assert!(defaults.defaults.is_none());
+        }
+        if fail_at != 1 {
+            let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+            assert_eq!(saved["version"], PROTECTED_IDENTITIES);
+            agents.upgrade().unwrap();
+            assert!(agents.list().unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
+fn failed_first_protected_write_preserves_the_previous_identity_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    FAIL_RENAME.set(1);
+    assert!(agents.set_protection(&agent.pubkey, 0, "security.test", Some(serde_json::json!({}))).is_err());
+    let reopened = AppAgents::open(agents.path.clone());
+    let saved = reopened.get(&agent.pubkey, RELAY).unwrap();
+    assert!(saved.protection.is_none());
+    assert_eq!(saved.protection_revision, 0);
+    reopened.set_protection(&agent.pubkey, 0, "security.test", Some(serde_json::json!({}))).unwrap();
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap().protection_revision, 1);
 }

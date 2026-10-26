@@ -1455,3 +1455,17 @@ it("lets new work steer while a stopped Attention refresh is still pending", asy
     await Promise.all([first, stopped, next, later]);
   }
 });
+
+it("does not acknowledge strict retirement when the native session refuses to close", async () => {
+  const { goose, release, waiting } = await slow("session/close", true);
+  const session = await goose.open({
+    cwd: "/work",
+    systemPrompt: "",
+    tools: ok,
+  });
+  const closing = goose.close(session, true);
+  const failed = expect(closing).rejects.toThrow("No active run");
+  await vi.waitFor(() => expect(waiting()).toBe(1));
+  release();
+  await failed;
+});

@@ -3,7 +3,10 @@
 //! arrive. A process belongs to the plugin that started it and to the page that
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
 //! app exits. A page that reloaded hears nothing of it after. It runs with the
-//! user's own access: there is no sandbox.
+//! user's own access, with optional native containment for protected workers.
+mod protection;
+use protection::ProcessProtection;
+
 use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostProcess;
@@ -302,16 +305,19 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     env: Option<HashMap<String, Option<String>>>,
     on_event: Channel<ProcessEvent>,
     mcp: Option<ProcessMcpConnection>,
+    protection: Option<ProcessProtection>,
 ) -> Result<u64, String> {
     let page = processes.page();
     let plugin = id.clone();
-    let declared = with_manager(manager, move |manager| {
+    let (declared, registry) = with_manager(manager, move |manager| {
+        let registry = manager.storage_root().to_path_buf();
         manager
             .host_grants(&id, &revision)?
             .processes
             .into_iter()
             .find(|process| process.id == process_id)
             .ok_or_else(|| "Process is not declared".into())
+            .map(|declared| (declared, registry))
     })
     .await?;
     if args.len() > 256 || args.iter().any(|arg| arg.contains('\0')) {
@@ -320,19 +326,60 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     load_login_shell_path().await;
     let path = effective_path();
     let program = program_path(&declared, || app.path().resource_dir().ok(), &path)?;
-    let mut command = if mcp.is_some() {
+    let (program, prefix) = if mcp.is_some() {
         let resources = app.path().resource_dir().map_err(|_| "No app resources")?;
         let helper = if cfg!(windows) {
             "buzz-agent-command.exe"
         } else {
             "buzz-agent-command"
         };
-        let mut command = Command::new(resources.join("bin").join(helper));
-        command.arg("--launch").arg(&program);
-        command
+        (
+            resources.join("bin").join(helper),
+            vec![
+                std::ffi::OsString::from("--launch"),
+                program.into_os_string(),
+            ],
+        )
+    } else {
+        (program, Vec::new())
+    };
+    #[cfg(not(target_os = "macos"))]
+    let _ = &registry;
+    let mut command = if let Some(protection) = protection {
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = protection;
+            return Err("Protected workers require macOS".into());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // A dev frontend can be served from another checkout. Its actual
+            // source is not native-owned, so HMR could replace the gate.
+            if tauri::is_dev() {
+                return Err("Use a packaged Buzz build for protected workers; development frontends are mutable".into());
+            }
+            let controls = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "Application data is unavailable")?
+                .join("agents");
+            std::fs::create_dir_all(&controls).map_err(|_| "Agent controls are unavailable")?;
+            let executable =
+                std::env::current_exe().map_err(|_| "Application executable is unavailable")?;
+            let bundle = executable
+                .ancestors()
+                .find(|p| p.extension().is_some_and(|extension| extension == "app"))
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or(executable);
+            let profile = protection.profile(&[controls, bundle, registry])?;
+            let mut contained = Command::new("/usr/bin/sandbox-exec");
+            contained.args(["-p", &profile]).arg(program);
+            contained
+        }
     } else {
         Command::new(program)
     };
+    command.args(prefix);
     command
         .args(&declared.args)
         .args(&args)

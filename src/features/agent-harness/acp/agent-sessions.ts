@@ -441,6 +441,17 @@ export class AgentSessions {
 
   /** Closes its sessions, ending their turns; the process keeps serving other
    * agents. */
+  async shutdown() {
+    this.disposed = true;
+    const live = [...this.live.values(), ...this.once.values()].filter((entry): entry is Live => !!entry);
+    for (const [key, entry] of this.live) {
+      clearTimeout(entry.timer);
+      this.live.delete(key);
+      this.shown.delete(key);
+    }
+    await Promise.all(live.map((entry) => entry.process.close(entry.session, true)));
+    this.options.onChange?.();
+  }
   dispose() {
     this.disposed = true;
     for (const [key, live] of this.live) this.drop(key, live);

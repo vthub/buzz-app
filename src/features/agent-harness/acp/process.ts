@@ -318,21 +318,24 @@ export class AcpProcess {
 
   /** Ends a session. Its turn, if any, is cancelled first. The harness is
    * asked to close it only when it says it can. */
-  async close(session: AcpSession) {
+  async close(session: AcpSession, strict = false) {
     if (!this.sessions.delete(session.id)) return;
     session.fail("The session was closed");
     void session.server?.close();
     if (!this.alive) return;
     this.notify("session/cancel", { sessionId: session.id });
-    if (this.hooks.closeSession !== "always" && !this.advertises("close"))
+    if (this.hooks.closeSession !== "always" && !this.advertises("close")) {
+      if (strict) throw new Error("The harness cannot acknowledge session retirement");
       return;
+    }
     await this.request(
       "session/close",
       { sessionId: session.id },
       REQUEST_TIMEOUT_MS,
-    ).catch((error) =>
-      console.warn(`${this.hooks.label} did not close a session`, error),
-    );
+    ).catch((error) => {
+      if (strict) throw error;
+      console.warn(`${this.hooks.label} did not close a session`, error);
+    });
   }
 
   kill() {

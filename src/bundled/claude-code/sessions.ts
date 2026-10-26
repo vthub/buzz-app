@@ -420,6 +420,13 @@ export class AgentSessions {
         this.drop(key, live);
   }
 
+  async shutdown() {
+    const processes = [...this.live.values(), ...this.once.values()].flatMap(
+      (live) => (live ? [live.process] : []),
+    );
+    this.dispose();
+    await Promise.all(processes.map((process) => process.exited));
+  }
   dispose() {
     this.disposed = true;
     this.clearDiscovery();

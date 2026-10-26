@@ -62,6 +62,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   agents.register<Config>({
     id: TYPE_ID,
     hooks: { events: ["beforeTool", "afterTool"] },
+    retire: (pubkey) => runtime.retire(pubkey),
+    protection: true,
     title: "Pi",
     icon: PiLogoIcon,
     description:

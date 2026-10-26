@@ -2213,3 +2213,59 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     "Private root",
   );
 });
+
+it.each(["stop", "retire"])(
+  "cancels a held fallback-send approval on %s without publishing",
+  async (mode) => {
+    const answered = deferred<unknown>();
+    const release = deferred<boolean>();
+    let checked: AbortSignal | undefined;
+    const f = setup({
+      wait: () => answered.promise,
+      abort: () => ({}),
+      runtime: () => ({
+        file: "/runtime/host.mjs",
+        node: "/node/bin/node",
+        codeRoot: "/runtime",
+        nodeRoot: "/node",
+        data: "/data",
+        auth: "/auth",
+      }),
+    });
+    let stop!: () => Promise<void>;
+    const turn = f.deliver(
+      { type: "mention", event: reply("2", "@Pi look") },
+      {
+        interruptible: (fn) => {
+          stop = fn;
+        },
+      },
+    );
+    await turn.run;
+    Object.assign(f.agent, {
+      protection: {
+        key: "test",
+        stateKey: "test",
+        processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+        assertAvailable() {},
+        async check(_action: unknown, signal: AbortSignal) {
+          checked = signal;
+          await release.promise;
+          signal.throwIfAborted();
+        },
+      },
+    });
+    answered.resolve({
+      status: "done",
+      answer: 5,
+      text: "The build is green.",
+    });
+    await vi.waitFor(() => expect(checked).toBeDefined());
+    if (mode === "stop") await stop();
+    else await f.runtime.retire(self);
+    expect(checked?.aborted).toBe(true);
+    release.resolve(true);
+    await f.settled(turn);
+    expect(f.published).toEqual([]);
+  },
+);

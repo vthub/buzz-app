@@ -62,7 +62,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // Agents that stop running, the app signing out included, stop their
     // processes; switching communities does not.
     if (snapshot.status === "loading") return;
-    const running = snapshot.running.filter((agent) => agent.type === typeKey);
+    const running = snapshot.running.filter(
+      (agent) => agent.type === typeKey && !agent.protection,
+    );
     runtime.sync(running);
     // Once loaded, and when the first Claude agent runs, the copy is brought
     // up to date; that is also when a first copy is downloaded.
@@ -103,6 +105,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   agents.register<Config>({
     id: TYPE_ID,
     hooks: { events: CLAUDE_HOOK_EVENTS },
+    retire: (pubkey) => runtime.retire(pubkey),
+    protectionUnavailable:
+      "Claude cannot withhold every native tool result for review. Protected execution is unavailable.",
     title: "Claude",
     icon: ClaudeLogoIcon,
     description:

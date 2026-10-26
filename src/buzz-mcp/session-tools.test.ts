@@ -1,7 +1,8 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { ATTENTION_TOOLS } from "./attention";
 import { type Listing, respond } from "./rpc";
 import {
+  callSessionTool,
   type AddedTool,
   addedKey,
   sessionHint,
@@ -63,4 +64,57 @@ it("lists the tools as the harness has it, and without their load by default", a
   expect((await answer("initialize", listing)).result.instructions).toBe(
     "Search for the rest.",
   );
+});
+
+it("holds a protected tool until approval and executes only the reviewed arguments", async () => {
+  let allow!: () => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const approval = new Promise<void>((resolve) => {
+    allow = resolve;
+  });
+  const protect = vi.fn(async (action) => {
+    if (action.kind === "tool") {
+      entered();
+      await approval;
+    }
+  });
+  const call = vi.fn(async (_client, _context, args) => JSON.stringify(args));
+  const args = { command: "echo reviewed" };
+  const client = { protect } as unknown as import("./client").BuzzClient;
+  const result = callSessionTool(client, {}, "plugin_write", args, [
+    { ...tool("plugin_write"), call },
+  ]);
+  await started;
+  expect(call).not.toHaveBeenCalled();
+  args.command = "changed while waiting";
+  allow();
+  expect(await result).toBe(JSON.stringify({ command: "echo reviewed" }));
+  expect(protect.mock.calls.map(([action]) => action.kind)).toEqual([
+    "tool",
+    "tool-result",
+  ]);
+  expect(protect.mock.calls[0]?.[0].command).toBe("echo reviewed");
+});
+it("withholds a denied tool result and checks thrown tool errors before exposing them", async () => {
+  const client = {
+    protect: vi.fn(async (action) => {
+      if (action.kind === "tool-result") throw new Error("denied result");
+    }),
+  } as unknown as import("./client").BuzzClient;
+  await expect(
+    callSessionTool(client, {}, "plugin_write", {}, [tool("plugin_write")]),
+  ).rejects.toThrow("denied result");
+  await expect(
+    callSessionTool(client, {}, "plugin_write", {}, [
+      {
+        ...tool("plugin_write"),
+        call: async () => {
+          throw new Error("untrusted error");
+        },
+      },
+    ]),
+  ).rejects.toThrow("denied result");
 });

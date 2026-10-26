@@ -53,7 +53,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
-    runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
+    runtime.sync(
+      snapshot.running.filter(
+        (agent) => agent.type === typeKey && !agent.protection,
+      ),
+    );
   };
   if (host.spawn) {
     const unsubscribe = agents.subscribe(sync);
@@ -66,6 +70,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    retire: (pubkey) => runtime.retire(pubkey),
+    protectionUnavailable:
+      "Goose cannot withhold every native tool result for review. Protected execution is unavailable.",
     title: "Goose",
     icon: GooseLogoIcon,
     description:

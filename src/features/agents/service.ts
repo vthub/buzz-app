@@ -9,6 +9,11 @@ import type {
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
 import { sourceCompleted, sourceSignature } from "./attention";
+import {
+  AgentProtectionService,
+  type AgentProtection,
+  type ProtectionBinding,
+} from "../agent-protection/service";
 import { createLocalAgentActivity } from "./local-activity";
 import { bindKeepAwake } from "./keep-awake";
 import {
@@ -197,6 +202,8 @@ export type Agent<Config = unknown> = Readonly<{
   /** Its Delete, or its Remove from this community, did not finish: it is
    * stopped here until that runs again. */
   deleting?: true;
+  protection?: ProtectionBinding;
+  protectionRevision?: number;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
   skipped: Readonly<Record<string, SkippedObject>>;
@@ -366,6 +373,7 @@ export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
  * replaced, so ask for a new one then. */
 export type AgentHandle = Readonly<{
   key: AgentKey;
+  protection?: AgentProtection | undefined;
   pubkey: string;
   name: string;
   owner: string;
@@ -744,6 +752,12 @@ export type AgentType<Config = unknown> = {
       settings: Readonly<Record<string, string>>,
     ): Config;
   }>;
+  /** Runtime routes its supported security boundaries through AgentHandle.protection. */
+  protection?: true;
+  /** Why protected runs must stop when this runtime cannot enforce the contract. */
+  protectionUnavailable?: string;
+  /** Fully retires existing native sessions before a protection policy changes. */
+  retire?(pubkey: string): Promise<void>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
@@ -1513,6 +1527,7 @@ export class AgentsService extends Service implements Agents {
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
 
+  private readonly protection: AgentProtectionService;
   constructor(
     ctx: Context,
     private readonly communities: AgentCommunities,
@@ -1552,6 +1567,49 @@ export class AgentsService extends Service implements Agents {
       interrupted: [],
       teams: this.teamList,
     });
+    this.protection = new AgentProtectionService(
+      ctx,
+      () => ({
+        owner: this.bound.get(this.selectedOrigin() ?? "")?.binding?.viewer,
+        agents: this.state.agents,
+        types: this.types(),
+      }),
+      {
+        read: async (owner) => {
+          if (!this.native?.protectionDefaults)
+            throw new Error("Native agent protection is unavailable");
+          return this.native.protectionDefaults(owner);
+        },
+        save: async (owner, revision, provider, policy) => {
+          if (!this.native?.setProtectionDefaults)
+            throw new Error("Native agent protection is unavailable");
+          await this.native.setProtectionDefaults(
+            owner,
+            revision,
+            provider,
+            policy,
+          );
+        },
+        update: async (pubkey, revision, provider, policy) => {
+          const setProtection = this.native?.setProtection?.bind(this.native);
+          if (!setProtection)
+            throw new Error("Native agent protection is unavailable");
+          const members = this.state.agents.filter((agent) => agent.pubkey === pubkey);
+          const agent = members[0];
+          if (!agent) throw new Error("No such agent on this device");
+          const type = this.types().find((type) => type.key === agent.type);
+          if (!type?.retire)
+            throw new Error(
+              "This runtime cannot safely change protection while Buzz is open",
+            );
+          await this.runners.retype(agent.key, agent.name, async () => {
+            for (const member of members) await type.retire?.(member.key);
+            await setProtection(pubkey, revision, provider, policy);
+            await this.refresh();
+          });
+        },
+      },
+    );
     this.configStore = new AgentConfigStore(storage);
     this.teamsChanged();
     // A synced copy that changes reaches running agents as a local save does.
@@ -1634,6 +1692,7 @@ export class AgentsService extends Service implements Agents {
             )
           : "";
       },
+      protection: (agent) => this.protection.bind(agent),
       agentTypes: () =>
         this.types()
           .filter((type) => !type.remote)
@@ -1742,7 +1801,20 @@ export class AgentsService extends Service implements Agents {
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
-      custody: native,
+      custody: native && {
+        ...native,
+        claim: async (pubkey) => {
+          try {
+            return await native.claim(
+              pubkey,
+              this.identities.find((agent) => agent.pubkey === pubkey && !agent.deleted)?.protectionRevision ?? 0,
+            );
+          } catch (error) {
+            void this.refresh().catch(() => undefined);
+            throw error;
+          }
+        },
+      },
       activity: localActivity,
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
@@ -2027,6 +2099,10 @@ export class AgentsService extends Service implements Agents {
         throw new Error("Agent commands require a desktop process host");
       const handle = this.runners.handle(key);
       if (!handle) throw new Error("This agent is not running here");
+      if (handle.protection)
+        throw new Error(
+          "Protected agents cannot run external Attention commands until that execution path supports complete protection",
+        );
       const source = ownerReads(this.relay(key), pubkeyOf(key));
       if (!source) throw new Error("The agent's community is not connected");
       const spawn = host.spawn.bind(host);
@@ -3078,7 +3154,7 @@ export class AgentsService extends Service implements Agents {
   sessionState(key: AgentKey, place: SessionPlace): SessionState {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
-    if (!agent || !this.runners.runs(key) || this.runners.transitioning(key))
+    if (!agent || (agent.protection && type?.protection !== true) || !this.runners.runs(key) || this.runners.transitioning(key))
       return "unavailable";
     return type?.sessionControls?.state(agent, place) ?? "unavailable";
   }
@@ -4096,6 +4172,8 @@ export class AgentsService extends Service implements Agents {
       | "relay"
       | "place"
       | "unfinished"
+      | "protection"
+      | "protectionRevision"
     >,
   ): Agent {
     const prior = this.shown.get(fields.pubkey);
@@ -4107,7 +4185,9 @@ export class AgentsService extends Service implements Agents {
       prior.owner === fields.owner &&
       prior.relay === fields.relay &&
       prior.place === fields.place &&
-      prior.unfinished === fields.unfinished
+      prior.unfinished === fields.unfinished &&
+      prior.protectionRevision === fields.protectionRevision &&
+      prior.protection === fields.protection
     )
       return prior;
     const agent: Agent = Object.freeze({
@@ -4346,6 +4426,8 @@ export class AgentsService extends Service implements Agents {
       owner: identity.owner,
       relay: identity.relay,
       place: "here",
+      ...(identity.protection ? { protection: identity.protection } : {}),
+      protectionRevision: identity.protectionRevision ?? 0,
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
@@ -4901,6 +4983,7 @@ export class AgentsService extends Service implements Agents {
           prior.name === identity.name &&
           prior.picture === identity.picture &&
           prior.type === identity.type &&
+          prior.protectionRevision === (identity.protectionRevision ?? 0) &&
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
@@ -4928,11 +5011,12 @@ export class AgentsService extends Service implements Agents {
     this.runners.reconcile(
       identities
         .filter((identity) => !identity.deleting)
-        .map(({ key, pubkey, relay, type, owner }) => ({
+        .map(({ key, pubkey, relay, type, owner, protectionRevision }) => ({
           key,
           pubkey,
           relay,
           type,
+          protectionRevision,
           scope: relayPartition(originOf(relay) ?? relay, owner),
         })),
       new Map(this.types().map((type) => [type.key, type])),

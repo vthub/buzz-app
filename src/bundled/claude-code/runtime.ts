@@ -212,6 +212,20 @@ export class ClaudeRuntime {
   /** Brings the runtime in line with this type's agents: changed settings
    * restart idle sessions, removed agents stop, and a spare waits while any
    * agent is here. */
+  private readonly retirements = new Map<string, Promise<void>>();
+  async retire(pubkey: string) {
+    let retiring = this.retirements.get(pubkey);
+    if (!retiring) {
+      retiring = (async () => {
+        const entry = this.agents.get(pubkey);
+        this.agents.delete(pubkey);
+        await entry?.sessions.shutdown();
+      })();
+      this.retirements.set(pubkey, retiring);
+    }
+    await retiring;
+    this.retirements.delete(pubkey);
+  }
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.key));
     // Deleted, signed out or its community disconnected: either way its

@@ -69,7 +69,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const sync = () => {
     const snapshot = ctx.agents.snapshot();
     if (snapshot.status === "loading") return;
-    const running = snapshot.running.filter((agent) => agent.type === typeKey);
+    const running = snapshot.running.filter(
+      (agent) => agent.type === typeKey && !agent.protection,
+    );
     runtime.sync(running);
     // Once loaded, and when the first Codex agent runs, the copy is brought
     // up to date; that is also when a first copy is downloaded.
@@ -121,6 +123,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.agents.register<Config>({
     id: TYPE_ID,
     hooks: { events: CODEX_HOOK_EVENTS },
+    retire: (pubkey) => runtime.retire(pubkey),
+    protectionUnavailable:
+      "Codex does not offer fail-closed checks for every built-in tool. Protected execution is unavailable.",
     title: "Codex",
     icon: CodexLogoIcon,
     description:

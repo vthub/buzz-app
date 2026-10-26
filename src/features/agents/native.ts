@@ -1,3 +1,7 @@
+import type {
+  ProtectionBinding,
+  ProtectionDefaults,
+} from "../agent-protection/service";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
 
@@ -18,6 +22,10 @@ export type AgentIdentity = Readonly<{
    * drop it from its channels and archive it, after which `forget` removes
    * it. */
   deleted: boolean;
+  protection?: ProtectionBinding;
+  protectionRevision?: number;
+  /** Its Delete started and has not finished. It keeps its key, so it cannot
+   * be imported again, and stays stopped until Delete is pressed again. */
   /** Its Delete, or its leaving this community, started and has not
    * finished. It stays stopped here until that is pressed again. */
   deleting?: true;
@@ -118,6 +126,19 @@ export type AgentsNative = {
   >;
   /** Renames it in every community it is in. */
   rename(pubkey: string, name: string): Promise<void>;
+  protectionDefaults?(owner: string): Promise<ProtectionDefaults>;
+  setProtectionDefaults?(
+    owner: string,
+    revision: number,
+    provider: string,
+    policy: unknown | null,
+  ): Promise<void>;
+  setProtection?(
+    pubkey: string,
+    revision: number,
+    provider: string,
+    policy: unknown | null,
+  ): Promise<void>;
   /** Sets its profile picture in one community, an HTTPS image URL, or with
    * `null` clears it. */
   setPicture(member: Membership, picture: string | null): Promise<void>;
@@ -182,7 +203,7 @@ export type AgentsNative = {
   /** Whether this app runs the agent: every copy of the app on this machine
    * shares the agent list, and one runs each agent. The installed app always
    * runs what it can; a dev build lets go while it does. */
-  claim(pubkey: string): Promise<boolean>;
+  claim(pubkey: string, revision?: number): Promise<boolean>;
   /** Lets another copy run it. */
   release(pubkey: string): Promise<void>;
   /** Keeps this Mac from idle sleep, or lets it sleep again. */
@@ -203,6 +224,22 @@ export const nativeAgents = (): AgentsNative | undefined =>
             destination,
             owner,
             agentType,
+          }),
+        protectionDefaults: (owner) =>
+          invoke("app_agent_protection_defaults", { owner }),
+        setProtectionDefaults: (owner, revision, provider, policy) =>
+          invoke("app_agent_set_protection_defaults", {
+            owner,
+            revision,
+            provider,
+            policy,
+          }),
+        setProtection: (pubkey, revision, provider, policy) =>
+          invoke("app_agent_set_protection", {
+            pubkey,
+            revision,
+            provider,
+            policy,
           }),
         rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
         setPicture: ({ pubkey, relay }, picture) =>
@@ -260,7 +297,7 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_remember", { pubkey, relay, slug, body, after }),
         publishProfile: ({ pubkey, relay }) =>
           invoke("app_agent_publish_profile", { pubkey, relay }),
-        claim: (pubkey) => invoke("app_agent_claim", { pubkey }),
+        claim: (pubkey, revision) => invoke("app_agent_claim", { pubkey, revision: revision ?? 0 }),
         release: (pubkey) => invoke("app_agent_release", { pubkey }),
         keepAwake: (hold) => invoke("keep_awake_set", { hold }),
       }

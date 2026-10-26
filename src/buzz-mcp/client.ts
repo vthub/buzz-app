@@ -1,3 +1,4 @@
+import type { ProtectionAction } from "../features/agent-protection/service";
 // What the Buzz tools need from whoever holds the agent's key: the app's native
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
@@ -75,6 +76,7 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
+  protect?(action: ProtectionAction): Promise<void>;
   readonly pubkey: string;
   /** The agent's membership key in this client's community: its pubkey in
    * its home community, which is the only one a standalone client has. */

@@ -4,6 +4,7 @@
 // of the device, community and storage comes through its RunnerHost, so the
 // desktop app and a standalone host run agents with the same code.
 import { bytesToHex } from "nostr-tools/utils";
+import type { ProtectionAction } from "../agent-protection/service";
 import type {
   Agent,
   AgentAttention,
@@ -261,6 +262,7 @@ type Runner = {
   readonly scope: string;
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
   type: RegisteredAgentType | undefined;
+  protectionRevision: number;
   controller: AbortController;
   /** Events waiting to run in each lane, mentions first; due timers are found
    * when a run starts instead. */
@@ -365,6 +367,7 @@ export type RunnerMember = Readonly<{
   pubkey: string;
   relay: string;
   type: string;
+  protectionRevision?: number | undefined;
   /** The partition its community's activity is kept under. */
   scope: string;
 }>;
@@ -429,6 +432,7 @@ export type RunnerHost = {
   team(key: AgentKey): string;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown>;
+  protection?(agent: Agent): AgentHandle["protection"];
   agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
   createAgent(
     agent: Agent,
@@ -608,7 +612,8 @@ export class AgentRunners {
         this.dropWatchWork(runner);
       }
       if (!runner) this.runners.set(identity.key, this.runner(identity, type));
-      else if (runner.type !== type) {
+      else if (runner.type !== type || runner.protectionRevision !== (identity.protectionRevision ?? 0)) {
+        runner.protectionRevision = identity.protectionRevision ?? 0;
         runner.controller.abort();
         runner.controller = new AbortController();
         runner.type = type;
@@ -787,7 +792,7 @@ export class AgentRunners {
   }
 
   private runner(
-    { key, pubkey, relay, scope }: RunnerMember,
+    { key, pubkey, relay, scope, protectionRevision }: RunnerMember,
     type: RegisteredAgentType | undefined,
   ): Runner {
     return {
@@ -795,6 +800,7 @@ export class AgentRunners {
       member: { pubkey, relay },
       scope,
       type,
+      protectionRevision: protectionRevision ?? 0,
       controller: new AbortController(),
       queues: { mention: [], watch: [] },
       running: false,
@@ -2228,6 +2234,11 @@ export class AgentRunners {
       return run(delivery);
     };
     const completion = Promise.resolve().then(async () => {
+      if (agent.protection) {
+        if (!type.protection || !handle.protection)
+          throw new Error(type.protectionUnavailable ?? "This runtime does not support the agent's protection policy");
+        handle.protection.assertAvailable();
+      }
       const pick = await pickFor(job.trigger, agent, type);
       const start = this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
@@ -2387,7 +2398,12 @@ export class AgentRunners {
   private handleFor(runner: Runner, agent: Agent, run = false): AgentHandle {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
-    return Object.freeze({
+    const protection = this.host.protection?.(agent);
+    return guarded({
+      protection: protection && {
+        ...protection,
+        check: (action: ProtectionAction, signal: AbortSignal) => protection.check(action, AbortSignal.any([lifetime, signal])),
+      },
       key: agent.key,
       pubkey: agent.pubkey,
       name: agent.name,
@@ -2467,7 +2483,7 @@ export class AgentRunners {
           ]);
       },
       attention: this.attention(agent.key, lifetime),
-    });
+    }, () => lifetime.throwIfAborted());
   }
 
   /** Counts a run as working until it and everything it handed to
@@ -2604,13 +2620,13 @@ export class AgentRunners {
           (await this.host.custody?.claim(runner.member.pubkey)) ?? false,
         );
       } catch (error) {
-        this.claimed(runner, true);
-        // Answering twice beats not answering at all.
+        this.claimed(runner, false);
+        // Uncertain custody must not admit a stale protection policy.
         console.warn(
           `Agent ${this.host.agent(runner.key)?.name} was not claimed`,
           error,
         );
-        return true;
+        return false;
       }
     });
   }
@@ -2815,7 +2831,9 @@ function guarded<T extends object>(target: T, live: () => void): T {
         key,
         typeof value !== "function"
           ? value && typeof value === "object"
-            ? guarded(value, live)
+            ? Array.isArray(value)
+              ? Object.freeze(value.map((item) => item && typeof item === "object" ? guarded(item, live) : item))
+              : guarded(value, live)
             : value
           : value.constructor === AsyncFunction
             ? async (...args: unknown[]) => {

@@ -120,6 +120,42 @@ export async function callSessionTool(
   added: readonly AddedTool[] = [],
 ): Promise<Reply> {
   if (!client) throw new Error("Buzz is not ready yet. Try again.");
+  // Hold the reviewed destination and arguments while the checker waits.
+  if (client.protect) {
+    context = structuredClone(context);
+    args = structuredClone(args);
+  }
+  const session = JSON.stringify(context);
+  await client.protect?.({
+    kind: "tool",
+    session,
+    content: { title: name, arguments: args },
+    ...(typeof args.command === "string" ? { command: args.command } : {}),
+  });
+  let reply: Reply;
+  try {
+    reply = await dispatchSessionTool(client, context, name, args, added);
+  } catch (error) {
+    if (!client.protect) throw error;
+    await client.protect({
+      kind: "tool-result",
+      session,
+      content: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    throw error;
+  }
+  await client.protect?.({ kind: "tool-result", session, content: reply });
+  return reply;
+}
+async function dispatchSessionTool(
+  client: BuzzClient,
+  context: Context,
+  name: string,
+  args: Record<string, unknown>,
+  added: readonly AddedTool[],
+): Promise<Reply> {
   const tool = added.find((tool) => tool.name === name);
   if (tool) return tool.call(client, context, args);
   if (!isAttentionTool(name)) return callTool(client, context, name, args);

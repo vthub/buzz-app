@@ -5,7 +5,7 @@
 use crate::sign_out::{self, legacy_identifier};
 use buzz_agent_controller::{
     inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
-    PortSource, Portables, Published, Removal, Secret, CREDENTIALS_BUSY,
+    PortSource, Portables, ProtectionBinding, ProtectionDefaults, Published, Removal, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -259,7 +259,7 @@ impl Hosting {
                     held.insert(pubkey.into(), file);
                 }
             }
-            return Ok(true);
+            return Ok(held.contains_key(pubkey));
         }
         // Opened, never created, as a dev build must not create the release
         // storage, which the packaged app's next launch may still move into.
@@ -279,6 +279,28 @@ impl Hosting {
             }
         }
         Ok(held.contains_key(pubkey))
+    }
+    /// Policy writes require this copy's custody and no overlapping dev/packaged host.
+    #[allow(clippy::incompatible_msrv)]
+    fn protecting<T>(
+        &self,
+        pubkey: &str,
+        change: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let held = self.held();
+        if !held.contains_key(pubkey) {
+            return Err("Change protection in the Buzz app that runs this agent".into());
+        }
+        let dir = self.dir.as_ref().map_err(Clone::clone)?;
+        let other = open_lock(&dir.join(format!(
+            "{pubkey}.{}",
+            if self.packaged { "lock" } else { "packaged" }
+        )))?;
+        if !lock(other.try_lock())? {
+            return Err("Quit the other copy of Buzz before changing protection".into());
+        }
+        // Both hosting locks stay held across the native CAS write.
+        change()
     }
 }
 /// Whether a try at a lock took it; closing the file lets go.
@@ -336,6 +358,9 @@ pub(crate) struct AppAgentSummary {
     home: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     joining: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protection: Option<ProtectionBinding>,
+    protection_revision: u64,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -350,6 +375,8 @@ impl From<AppAgent> for AppAgentSummary {
             deleting: agent.deleting,
             home: agent.home,
             joining: agent.joining,
+            protection: agent.protection,
+            protection_revision: agent.protection_revision,
         }
     }
 }
@@ -397,6 +424,44 @@ pub(crate) async fn app_agent_create(
         let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
         keys.insert(agent.pubkey.clone(), Arc::new(key));
         Ok(agent.into())
+    })
+    .await
+}
+
+/// Changes only the plugin binding, never identity or credential custody.
+#[tauri::command]
+pub(crate) async fn app_agent_protection_defaults(
+    host: tauri::State<'_, AppAgentHost>,
+    owner: String,
+) -> Result<ProtectionDefaults, String> {
+    let agents = host.agents()?;
+    blocking(move || agents.protection_defaults(&owner)).await
+}
+#[tauri::command]
+pub(crate) async fn app_agent_set_protection_defaults(
+    host: tauri::State<'_, AppAgentHost>,
+    owner: String,
+    revision: u64,
+    provider: String,
+    policy: Option<Value>,
+) -> Result<(), String> {
+    let agents = host.agents()?;
+    blocking(move || agents.set_protection_defaults(&owner, revision, &provider, policy)).await
+}
+#[tauri::command]
+pub(crate) async fn app_agent_set_protection(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    revision: u64,
+    provider: String,
+    policy: Option<Value>,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    let hosting = state.hosting.clone();
+    blocking(move || {
+        hosting.protecting(&pubkey, || {
+            agents.set_protection(&pubkey, revision, &provider, policy)
+        })
     })
     .await
 }
@@ -647,9 +712,21 @@ pub(crate) async fn app_agent_forget(
 pub(crate) async fn app_agent_claim(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    revision: Option<u64>,
 ) -> Result<bool, String> {
     let hosting = state.hosting.clone();
-    blocking(move || hosting.claim(&pubkey)).await
+    let agents = state.agents.clone()?;
+    blocking(move || {
+        if !hosting.claim(&pubkey)? {
+            return Ok(false);
+        }
+        let current = agents.list()?.into_iter().find(|agent| agent.pubkey == pubkey && !agent.deleted).ok_or("No such agent on this device")?;
+        if current.protection_revision != revision.unwrap_or(0) {
+            return Err("Agent protection changed; refresh before running this agent".into());
+        }
+        Ok(true)
+    })
+    .await
 }
 
 /// Lets another copy of the app run the agent, as when this one cannot.
@@ -1200,6 +1277,8 @@ mod tests {
             deleting: false,
             home: None,
             joining: false,
+            protection: None,
+            protection_revision: 0,
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());
@@ -1334,6 +1413,8 @@ mod tests {
             deleting: false,
             home: None,
             joining: false,
+            protection: None,
+            protection_revision: 0,
         }
     }
 
@@ -1486,6 +1567,23 @@ mod tests {
             packaged,
             held: Mutex::default(),
         }
+    }
+
+    #[test]
+    fn protection_changes_require_current_and_exclusive_hosting() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = "a".repeat(64);
+        let dev = hosting(Ok(dir.path().join("hosts")), false);
+        let packaged = hosting(Ok(dir.path().join("hosts")), true);
+        assert!(dev.protecting(&agent, || Ok(())).is_err());
+        assert!(dev.claim(&agent).unwrap());
+        assert!(dev.protecting(&agent, || Ok(())).is_ok());
+        assert!(packaged.claim(&agent).unwrap());
+        // A packaged takeover alone does not mean the dev process has stopped.
+        assert!(packaged.protecting(&agent, || Ok(())).is_err());
+        assert!(dev.protecting(&agent, || Ok(())).is_err());
+        assert!(!dev.claim(&agent).unwrap());
+        assert!(packaged.protecting(&agent, || Ok(())).is_ok());
     }
 
     #[test]
