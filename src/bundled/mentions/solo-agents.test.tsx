@@ -41,10 +41,10 @@ import { profileTarget } from "../../features/profiles/target";
 import { npubEncode } from "nostr-tools/nip19";
 import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
 import {
-  MENTION_RESOLVE_TIMEOUT_MS,
   resolveSpaceMention,
   type SpaceMentionResolution,
 } from "./resolve-space-mention";
+import { MENTION_RESOLVE_TIMEOUT_MS } from "../../features/conversation/completion";
 import { createProfileDirectory } from "../../features/relay/profile-directory";
 import type { RelayEvent } from "../../features/relay/events";
 import { keypair, profile } from "../../features/relay/testing";

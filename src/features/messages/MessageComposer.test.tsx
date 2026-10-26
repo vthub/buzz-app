@@ -38,9 +38,11 @@ import type {
   ComposerTool,
   ComposerToolProps,
   CompletionPending,
+  CompletionResolution,
   CompletionResult,
   InlineRenderer,
 } from "../conversation/contracts";
+import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import type { MentionRecipient } from "./mention-draft";
@@ -9974,7 +9976,7 @@ function mountPendingMention() {
     publish,
     /** Type `@name`, publish an undecided result for it, then type Space.
      * Returns the keydown's default-prevented state inverted: false when held. */
-    hold(name: string, outcome: Promise<MentionRecipient | null>) {
+    hold(name: string, outcome: Promise<CompletionResolution>) {
       resolve.mockImplementation(() => outcome);
       h.fill(`@${name}`);
       act(() => {
@@ -10237,6 +10239,32 @@ it("extends a pending chip to the one longer name the typed words complete when 
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([examples.pubkey]);
 });
 
+it("returns the whole span to prose when the name a chip extended into is itself continued by a name the words do not complete", async () => {
+  // `Mira Example Jr` continues `Mira Example` as that continued `mira`: the
+  // chip extends once, the second resolution answers `continued` again over
+  // the same page, and ` hi` completes nothing, so what was typed comes back.
+  const h = mountDirectoryMention();
+  const junior = { pubkey: "d".repeat(64), name: "Mira Example Jr" };
+  await h.holdMira();
+  await h.user.keyboard("Example hi");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [mira, junior], hasMore: false });
+  await waitFor(() => expect(h.chip("mira")).toBeNull());
+  expect(h.chip("mira Example")).toBeNull();
+  expect(h.input()).toHaveValue("@mira Example hi");
+  expect(h.input().querySelector("[data-source]")).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).toBeNull();
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "@mira Example hi",
+    [],
+    [],
+  );
+});
+
 it.each([
   { case: "stop mid-name", typed: "Exam", text: "@mira Exam" },
   {
@@ -10348,7 +10376,52 @@ it("a send while a chip is pending waits through its extension, then asks about 
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
 });
 
-it("undo after an extended chip settled restores the words typed after it, then the typed query", async () => {
+it("returns a chip to prose at the resolver's bound when the longer name it extended into never settles, and lets the send go", async () => {
+  // A scripted provider whose chained resolve does I/O that never answers:
+  // the host holds it to the bound the first resolution gets.
+  const h = mountPendingMention();
+  const outcome = deferred<CompletionResolution>();
+  const chained = vi.fn<CompletionPending["resolve"]>(
+    () => new Promise<never>(() => {}),
+  );
+  expect(h.hold("mira", outcome.promise)).toBe(false);
+  await h.user.keyboard("Example hi");
+  expect(h.input()).toHaveValue("@mira Example hi");
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () =>
+      outcome.resolve({
+        continued: [{ name: "Mira Example", resolve: chained }],
+      }),
+    );
+    expect(h.chip("mira Example")).toHaveAttribute("aria-busy", "true");
+    expect(chained).toHaveBeenCalledOnce();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () =>
+      vi.advanceTimersByTime(MENTION_RESOLVE_TIMEOUT_MS - 1),
+    );
+    expect(h.chip("mira Example")).toHaveAttribute("aria-busy", "true");
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1));
+    // The chip returned to prose and the waiting send went out with it.
+    expect(h.chip("mira Example")).toBeNull();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@mira Example hi",
+      [],
+      [],
+    );
+    expect(h.input()).toHaveValue("");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("undo after an extended chip settled first removes the words typed after it, then leaves the typed `@mira`", async () => {
   const h = mountDirectoryMention();
   await h.holdMira();
   await h.user.keyboard("Example hi");

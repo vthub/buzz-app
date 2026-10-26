@@ -9,18 +9,11 @@ import { mentionCandidates } from "./mention-candidates";
 import { continuingNames } from "./mention-ranking";
 import { namedCandidates, spaceMention } from "./use-mention-choices";
 import { teamBlocksSpace } from "./use-team-mentions";
+import { MENTION_RESOLVE_TIMEOUT_MS } from "../../features/conversation/completion";
 import {
   fetchMentionDirectoryPage,
   type MentionDirectoryPage,
 } from "./useMentionDirectory";
-
-/**
- * How long a pending mention waits for the evidence Space needed: one
- * membership read, one profile batch, one inventory read and one directory
- * page, each a single relay round trip with no typing debounce. Bounds both
- * the chip and a send that waits on it.
- */
-export const MENTION_RESOLVE_TIMEOUT_MS = 8000;
 
 /** What the chooser knew about its destination when Space was typed. */
 export type SpaceMentionScope = {

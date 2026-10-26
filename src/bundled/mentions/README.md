@@ -250,11 +250,12 @@ member), which a chip that ended the query could not. A pending name that,
 once the full choice set is known, only longer known names keep from selecting
 (`Mira Example`, found by the directory search for `mira` after the chip was
 held) MAY instead extend over the words typed after the chip when they spell
-exactly one of those names up to a name boundary (`@mira Example hi` becomes a
-pending `@mira Example` with ` hi` outside it), and this section then applies
-to the longer name as if Space had been typed after it; the longest name the
-words complete is taken, as Space would have needed all of it typed. Words that
-stop mid-name or complete none of those names return the text to prose. In a
+one of those names up to a name boundary (`@mira Example hi` becomes a pending
+`@mira Example` with ` hi` outside it), taking the longest name the words
+complete, as Space would have needed all of it typed; this section then applies
+to the longer name as if Space had been typed after it, under the same bound.
+Words that stop mid-name or complete none of those names return the text to
+prose. In a
 DM a pending name that resolves to someone outside the DM returns to prose,
 since the chooser's "Will not be notified" row was never shown. Sending while
 a mention is pending waits for it, through such an extension. A pending

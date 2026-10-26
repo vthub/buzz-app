@@ -157,3 +157,13 @@ export function completionResult(result: CompletionResult): CompletionResult {
     ...(typeof result.retry === "function" ? { retry: result.retry } : {}),
   });
 }
+/**
+ * How long a pending mention waits for the evidence Space needed, counted
+ * once per name: the provider bounds its own `CompletionPending.resolve` by
+ * it (one membership read, one profile batch, one inventory read and one
+ * directory page, each a single relay round trip with no typing debounce),
+ * and the host holds each longer name a chip extends into to the same bound.
+ * Expiry returns the name to prose. Bounds both the chip and a send that
+ * waits on it.
+ */
+export const MENTION_RESOLVE_TIMEOUT_MS = 8000;
