@@ -71,8 +71,11 @@ export function InlineChip({
           >
             {trigger}
             {face.loading ? (
+              // Bold stroke: at the x-height the default 2 is thinner than
+              // the name's stems and goes grey at 1x.
               <CircleNotchIcon
                 className="inline-chip-spinner"
+                strokeWidth={2.5}
                 aria-hidden="true"
               />
             ) : null}

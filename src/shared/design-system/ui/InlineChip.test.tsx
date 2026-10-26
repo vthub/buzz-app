@@ -84,10 +84,10 @@ it("shows a resolving mention as a busy chip whose spinner borrows the sigil's b
   expect(chip).toHaveTextContent("@Example");
   const trigger = chip.querySelector(".inline-chip-trigger");
   expect(trigger).toHaveAttribute("data-loading");
-  expect(trigger?.querySelector(".inline-chip-spinner")).toHaveAttribute(
-    "aria-hidden",
-    "true",
-  );
+  const spinner = trigger?.querySelector(".inline-chip-spinner");
+  expect(spinner).toHaveAttribute("aria-hidden", "true");
+  // Bold stroke, so the x-height arc matches the weight of the name's stems.
+  expect(spinner).toHaveAttribute("stroke-width", "2.5");
   // Nothing truthful to preview or open yet, even for an interactive consumer.
   expect(container.querySelector("button")).toBeNull();
 });

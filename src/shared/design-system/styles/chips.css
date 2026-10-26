@@ -72,26 +72,28 @@
   }
 
   .inline-chip-spinner {
-    /* Set like a glyph of the name, not in the sigil's line box. An inline
+    /* Set like a round lowercase glyph of the name (`o`, `c`, `e`): foot on
+       the baseline, crown at the x-height. Sized from the font's own x-height
+       (`ex`; Inter 0.546em), not a fixed em: Tabler's notch at its default
+       stroke inks 20/24 of its box, so a 1.2ex box draws a 1ex arc. An inline
        SVG's baseline is its bottom edge, so `bottom` offsets from the text
-       baseline itself; Chromium rounds a font's ascent and descent to whole
-       px, so any offset from the content box drifts with size, while this
-       holds at every scale. Tabler's notch inks 20/24 of its box, so 0.75em
-       draws a 0.625em arc. Centring it on the cap-height midline (`cap` is the
-       font's own: Inter 0.727em) rests its foot 0.05em above the baseline and
-       its crown just under the cap height, between the x-height and the
-       capitals, where an inline glyph reads as part of the word. The `@`
-       centred it 0.08em lower: its ink descends 0.19em below the baseline. */
+       baseline itself (Chromium rounds a font's ascent and descent to whole
+       px, so an offset from the content box would drift with size); the box
+       pads 2/24 = 0.1ex below the arc, so sinking it 0.1ex rests the arc's
+       foot on the baseline and its centre on the x-height midline. The chip
+       draws the icon at stroke 2.5, which grows outward around the same path
+       by 0.25/24 of the box: 0.007em over the baseline and the x-height, the
+       overshoot Inter gives its round lowercase glyphs. */
     position: relative;
     display: inline-block;
     vertical-align: baseline;
-    width: 0.75em;
-    height: 0.75em;
+    width: 1.2ex;
+    height: 1.2ex;
     /* Advances nothing: the transparent `@` keeps the width, and the arc is
        centred in its advance (Inter: 0.966em). */
-    margin-right: -0.75em;
-    left: calc((-0.966em - 0.75em) / 2);
-    bottom: calc(0.5cap - 0.375em);
+    margin-right: -1.2ex;
+    left: calc((-0.966em - 1.2ex) / 2);
+    bottom: -0.1ex;
     color: var(--text-standard);
     animation: inline-chip-spin 1s linear infinite;
   }
