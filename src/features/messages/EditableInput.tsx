@@ -232,7 +232,13 @@ export function EditableInput({
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
   /** Settles that landed during an IME composition, applied when it ends. */
-  const heldSettles = useRef<[string, MentionRecipient | null][]>([]);
+  const heldSettles = useRef<
+    {
+      id: string;
+      recipient: MentionRecipient | null;
+      resolve(applied: boolean): void;
+    }[]
+  >([]);
   const pointing = useRef(false);
   const nativeEditing = useRef(false);
   const plain = useRef<PlainLink[]>([]);
@@ -240,6 +246,8 @@ export function EditableInput({
   const emitted = useRef(draft);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
+    /** Applies the settles held through the composition that has just ended. */
+    settleHeld(): void;
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -716,23 +724,28 @@ export function EditableInput({
       editor.focus();
       return id;
     };
+    const pendingToken = (id: string) =>
+      projection().tokens.find((token) => token.node.attrs.pending?.id === id);
     /** Settling is not an edit: it happens outside history, while sending too,
      * and a later undo still restores the typed text through it. */
     const settlePendingMention = (
       id: string,
       recipient: MentionRecipient | null,
-    ) => {
-      const token = projection().tokens.find(
-        (token) => token.node.attrs.pending?.id === id,
-      );
-      if (!token) return false;
+    ): boolean | Promise<boolean> => {
+      if (!pendingToken(id)) return false;
       // A document change under a composition can drop or commit it early,
-      // and this runs from a promise at any time. Composition keystrokes edit
-      // the IME's text, not the chip, so it is still there at compositionend.
-      if (composing.current || editor.composing) {
-        heldSettles.current.push([id, recipient]);
-        return true;
-      }
+      // and this runs from a promise at any time. Hold it until compositionend
+      // and answer with the replay's outcome, so the host does not treat a
+      // chip that is still in the draft as settled.
+      if (composing.current || editor.composing)
+        return new Promise((resolve) => {
+          heldSettles.current.push({ id, recipient, resolve });
+        });
+      return applySettle(id, recipient);
+    };
+    const applySettle = (id: string, recipient: MentionRecipient | null) => {
+      const token = pendingToken(id);
+      if (!token) return false;
       const convert = (person: MentionRecipient | null) =>
         editor.state.tr
           .replaceWith(
@@ -1904,6 +1917,14 @@ export function EditableInput({
       },
     });
     api.current = {
+      settleHeld() {
+        // ProseMirror skips its own compositionend handler while the view is
+        // not editable, as during a send, and leaves `composing` set until the
+        // next click. The composition has ended all the same, so the replay
+        // applies without that guard.
+        for (const held of heldSettles.current.splice(0))
+          held.resolve(applySettle(held.id, held.recipient));
+      },
       sync(next, reset = false) {
         if (
           !reset &&
@@ -1940,6 +1961,7 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
+      for (const held of heldSettles.current.splice(0)) held.resolve(false);
       editor.destroy();
     };
   }, [ref]);
@@ -2041,8 +2063,11 @@ export function EditableInput({
         }}
         onCompositionEnd={(event) => {
           composing.current = false;
-          for (const [id, recipient] of heldSettles.current.splice(0))
-            ref.current?.settlePendingMention(id, recipient);
+          // ProseMirror reads the composition's final DOM records in a
+          // microtask queued by its own compositionend handler, which ran
+          // first; a settle dispatched before that flush would rewrite the
+          // text node those records point at and lose the committed text.
+          queueMicrotask(() => api.current?.settleHeld());
           events.onCompositionEnd?.(event as never);
         }}
       />

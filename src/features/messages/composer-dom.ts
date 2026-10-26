@@ -95,8 +95,13 @@ export type ComposerInputElement = HTMLDivElement & {
     range: { start: number; end: number },
   ): string | false;
   /** Turn a pending chip into its recipient, or back into its typed text.
-   * Outside undo history and allowed while sending; false once the chip is gone. */
-  settlePendingMention(id: string, recipient: MentionRecipient | null): boolean;
+   * Outside undo history and allowed while sending; false once the chip is
+   * gone. Under an IME composition the settle is held until it ends, and the
+   * promise is the replay's outcome. */
+  settlePendingMention(
+    id: string,
+    recipient: MentionRecipient | null,
+  ): boolean | Promise<boolean>;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
   toggleFormat(format: ComposerFormat): void;

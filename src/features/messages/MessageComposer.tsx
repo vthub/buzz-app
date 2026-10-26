@@ -1196,7 +1196,21 @@ function Composer({
       valueRef.current.recipients.length < 32
         ? recipient
         : null;
-    if (!input.current?.settlePendingMention(id, accepted)) {
+    const outcome = input.current?.settlePendingMention(id, accepted) ?? false;
+    // Held through an IME composition: the chip is still pending until the
+    // replay, so the entry stays and `settled` waits for the outcome.
+    if (outcome instanceof Promise)
+      return outcome.then((applied) => settled(id, accepted, applied));
+    settled(id, accepted, outcome);
+  }
+  function settled(
+    id: string,
+    accepted: MentionRecipient | null,
+    applied: boolean,
+  ) {
+    const entry = pendingMentions.current.get(id);
+    if (!entry) return;
+    if (!applied) {
       // The chip left the draft in the commit before the effect below could
       // abort this resolution. Keep its resolver: redo restores the chip under
       // the same id, and the effect starts it again.

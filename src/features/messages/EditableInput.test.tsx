@@ -3074,22 +3074,71 @@ it("settles a pending chip back into plain text while the editor is read-only", 
   expect(h.draft().recipients).toEqual([]);
   expect(h.input.querySelector("[data-source]")).toBeNull();
 });
-it("holds a settle that lands during a composition until the composition ends", () => {
+it("holds a settle that lands during a composition until the composition ends", async () => {
   const h = mount("hi @example");
   let id = "";
   act(() => {
     id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
   });
   act(() => fireEvent.compositionStart(h.input));
-  act(() => expect(h.input.settlePendingMention(id, example)).toBe(true));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.settlePendingMention(id, example);
+  });
+  expect(held).toBeInstanceOf(Promise);
   expect(h.input).toHaveValue("hi @example ");
   expect(pendingChip(h)).toHaveTextContent("@example");
   expect(h.draft().recipients).toEqual([]);
-  act(() => fireEvent.compositionEnd(h.input));
+  await act(async () => fireEvent.compositionEnd(h.input));
+  await expect(held).resolves.toBe(true);
   expect(h.input).toHaveValue("hi @Example Agent ");
   expect(h.draft().pending).toBeUndefined();
   expect(h.draft().recipients).toEqual([{ ...example, start: 3, end: 17 }]);
   expect(pendingChip(h)).toBeNull();
+});
+it("applies a held settle after the composition's final text has been read", async () => {
+  const h = mount("hi @example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
+  });
+  act(() => fireEvent.compositionStart(h.input));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.settlePendingMention(id, null);
+  });
+  const after = h.input.querySelector("[data-source]")?.nextSibling;
+  if (!(after instanceof Text)) throw new Error("No text after the chip");
+  await act(async () => {
+    // The IME commits its text and ends the composition in one task;
+    // ProseMirror reads the record only after compositionend.
+    after.nodeValue = " ab";
+    fireEvent.compositionEnd(h.input);
+  });
+  await expect(held).resolves.toBe(true);
+  expect(h.input).toHaveValue("hi @example ab");
+  expect(h.draft().pending).toBeUndefined();
+  expect(pendingChip(h)).toBeNull();
+});
+it("answers a held settle false when its chip is gone by the time the composition ends", async () => {
+  const h = mount("hi @example");
+  let id = "";
+  act(() => {
+    id = h.input.insertPendingMention("example", { start: 3, end: 11 }) || "";
+  });
+  act(() => fireEvent.compositionStart(h.input));
+  let held: boolean | Promise<boolean> = false;
+  act(() => {
+    held = h.input.settlePendingMention(id, example);
+  });
+  await act(async () => {
+    h.input.querySelector("[data-source]")?.remove();
+    fireEvent.compositionEnd(h.input);
+  });
+  await expect(held).resolves.toBe(false);
+  expect(h.input).toHaveValue("hi  ");
+  expect(h.draft().pending).toBeUndefined();
+  expect(h.draft().recipients).toEqual([]);
 });
 it("keeps the typed text when the recipient's name would overrun the limit", () => {
   const h = mount("@example", { maxLength: 12 });

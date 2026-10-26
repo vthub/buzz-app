@@ -10146,6 +10146,75 @@ it("keeps the resolver of a chip removed as its resolution landed, so redo settl
   }
 });
 
+it("waits for a settle held through a composition before sending, then sends and remembers the recipient", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    act(() => fireEvent.compositionStart(h.input()));
+    await act(async () => outcome.resolve(first));
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    // Send clicked under the composition: Mac WebKit leaves focus in the
+    // editor, so the IME has not committed and the chip is still pending.
+    h.submit();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled(),
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await act(async () => fireEvent.compositionEnd(h.input()));
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "@Honey ",
+        [first.pubkey],
+        [],
+      ),
+    );
+    expect([...(mentionHistory(h.session, "channel")?.keys() ?? [])]).toContain(
+      first.pubkey,
+    );
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("keeps the resolver of a chip gone when its held settle replays, and settles nothing", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const held = deferred<MentionRecipient | null>();
+  const restarted = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", held.promise);
+    act(() => fireEvent.compositionStart(h.input()));
+    await act(async () => held.resolve(first));
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    await act(async () => {
+      h.input().querySelector("[data-source]")?.remove();
+    });
+    expect(h.chip("honey")).toBeNull();
+    h.resolve.mockImplementation(() => restarted.promise);
+    await act(async () => fireEvent.compositionEnd(h.input()));
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    expect(h.resolve).toHaveBeenCalledOnce();
+    // Undo restores the chip under the same id, and its kept resolver starts again.
+    act(() => h.input().undo(false));
+    expect(h.chip("honey")).toBeInTheDocument();
+    expect(h.resolve).toHaveBeenCalledTimes(2);
+    await act(async () => restarted.resolve(first));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.chip("honey")).toBeNull();
+  } finally {
+    held.resolve(null);
+    restarted.resolve(null);
+  }
+});
+
 it("removing a pending chip abandons its resolution, and redo starts it again", async () => {
   const h = mountPendingMention();
   h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
