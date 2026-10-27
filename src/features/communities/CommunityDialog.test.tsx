@@ -13,6 +13,7 @@ import { CommunityDialog } from "./CommunityDialog";
 import { Context } from "@deepseek-ai/cordis";
 import { createCommunities, type Communities } from "./service";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+import { federatedFixture } from "../federated-identity/testing";
 
 stubAvatarBrowserApis();
 
@@ -606,4 +607,51 @@ it("opens a checked connection address separately without replacing or removing 
     await ctx.fiber.dispose();
     localStorage.clear();
   }
+});
+
+it("offers federated sign-in when joining refuses for it, then retries the step", async () => {
+  const user = userEvent.setup();
+  let refuse = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info" && refuse)
+        return Response.json(
+          { error: "Federated sign-in is required" },
+          { status: 401 },
+        );
+      if (route === "info") return Response.json({ name: "Fixture" });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Local", picture: "" },
+    }),
+  } as unknown as Communities;
+  const h = federatedFixture();
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={h.service}
+      mode="join"
+      close={() => {}}
+    />,
+  );
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://relay.example",
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  const signIn = await screen.findByRole("button", { name: "Sign in" });
+  refuse = false;
+  await user.click(signIn);
+  expect(h.service.signIn).toHaveBeenCalledOnce();
+  expect(
+    await screen.findByLabelText("Invite code (if required)"),
+  ).toBeInTheDocument();
 });

@@ -18,6 +18,8 @@ import { communityDestination, relayOrigin } from "./destination";
 import { nativeIdentityEnabled } from "../identity/service";
 import { readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
+import { CommunitySignIn } from "../federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../federated-identity/service";
 import styles from "./Communities.module.css";
 
 // Exact relay claim refusal codes, forwarded unchanged by the broker.
@@ -39,8 +41,11 @@ export function CommunityDialog({
   onJoined,
   invite,
   connectionFrom,
+  federatedIdentity,
 }: {
   communities: Communities;
+  /** Offers protected-community sign-in when admission refuses for it. */
+  federatedIdentity?: FederatedIdentity | undefined;
   mode: "join" | "profile";
   close(): void;
   onJoined?: (id: string) => void;
@@ -461,6 +466,13 @@ export function CommunityDialog({
               <p role="alert" className={styles.error}>
                 {error}
               </p>
+            )}
+            {error && (
+              <CommunitySignIn
+                identity={federatedIdentity}
+                error={error}
+                retry={() => void submit()}
+              />
             )}
           </>
         )}
