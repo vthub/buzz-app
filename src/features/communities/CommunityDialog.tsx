@@ -471,7 +471,9 @@ export function CommunityDialog({
               <CommunitySignIn
                 identity={federatedIdentity}
                 error={error}
-                retry={() => void submit()}
+                // Sign-in only clears the refusal: Continue then runs the current
+                // step with current input, never one captured before the login.
+                retry={() => setError("")}
               />
             )}
           </>

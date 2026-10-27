@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -609,7 +610,7 @@ it("opens a checked connection address separately without replacing or removing 
   }
 });
 
-it("offers federated sign-in when joining refuses for it, then retries the step", async () => {
+it("offers federated sign-in when joining refuses for it, then lets Continue run the current step", async () => {
   const user = userEvent.setup();
   let refuse = true;
   vi.stubGlobal(
@@ -649,9 +650,90 @@ it("offers federated sign-in when joining refuses for it, then retries the step"
   await user.click(screen.getByRole("button", { name: "Continue" }));
   const signIn = await screen.findByRole("button", { name: "Sign in" });
   refuse = false;
+  const requests = vi.mocked(fetch).mock.calls.length;
   await user.click(signIn);
   expect(h.service.signIn).toHaveBeenCalledOnce();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull(),
+  );
+  // Completing login replays nothing captured before it.
+  expect(vi.mocked(fetch).mock.calls.length).toBe(requests);
+  await user.clear(screen.getByLabelText("Community URL"));
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://other.example",
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(String(vi.mocked(fetch).mock.calls.at(-1)?.[0])).toContain(
+    "other.example",
+  );
   expect(
     await screen.findByLabelText("Invite code (if required)"),
   ).toBeInTheDocument();
 });
+
+it.each(["edit", "close"])(
+  "replays nothing captured before a pending sign-in (%s)",
+  async (change) => {
+    const user = userEvent.setup();
+    const requests = vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info" && requests.mock.calls.length < 3)
+        return Response.json(
+          { error: "Federated sign-in is required" },
+          { status: 401 },
+        );
+      if (route === "info") return Response.json({ name: "Fixture" });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", requests);
+    const communities = {
+      snapshot: () => ({
+        status: "ready",
+        relayAvailable: true,
+        profile: { name: "Local", picture: "" },
+      }),
+    } as unknown as Communities;
+    const h = federatedFixture();
+    let finish = () => {};
+    vi.mocked(h.service.signIn).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => {
+            h.publish({ status: "signed-in" });
+            resolve(h.service.snapshot());
+          };
+        }),
+    );
+    const view = render(
+      <CommunityDialog
+        communities={communities}
+        federatedIdentity={h.service}
+        mode="join"
+        close={() => {}}
+      />,
+    );
+    const field = screen.getByLabelText("Community URL");
+    await user.type(field, "wss://old.example");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(await screen.findByRole("button", { name: "Sign in" }));
+    if (change === "close") view.unmount();
+    else {
+      await user.clear(field);
+      await user.type(field, "wss://new.example");
+    }
+    const before = requests.mock.calls.length;
+    await act(async () => finish());
+    expect(requests.mock.calls.length).toBe(before);
+    expect(api.publishProfile).not.toHaveBeenCalled();
+    if (change === "edit") {
+      await user.click(screen.getByRole("button", { name: "Continue" }));
+      await waitFor(() =>
+        expect(String(requests.mock.calls.at(-1)?.[0])).toContain(
+          "new.example",
+        ),
+      );
+    }
+  },
+);
