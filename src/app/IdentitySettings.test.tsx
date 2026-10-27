@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import type { Identity } from "../features/identity/service";
+import type { FederatedIdentity } from "../features/federated-identity/service";
 import { IdentitySettings } from "./IdentitySettings";
 import { federatedFixture } from "../features/federated-identity/testing";
 const viewer = "ab".repeat(32);
@@ -109,12 +110,36 @@ it("clears a revealed key when leaving identity settings and starts masked on re
   expect(exportKey).toHaveBeenCalledTimes(1);
 });
 
+// Methods that need their receiver, like the real service's class methods.
+function bound(service: FederatedIdentity): FederatedIdentity {
+  const self: FederatedIdentity = {
+    snapshot: service.snapshot,
+    subscribe: service.subscribe,
+    signIn() {
+      expect(this).toBe(self);
+      return service.signIn();
+    },
+    cancelSignIn() {
+      expect(this).toBe(self);
+      return service.cancelSignIn();
+    },
+    signOut() {
+      expect(this).toBe(self);
+      return service.signOut();
+    },
+  };
+  return self;
+}
+
 it("shows the organization account and signs out of it once", async () => {
   const h = federatedFixture();
   h.publish({ status: "signed-in", email: "a@example.com" });
-  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
-    wrapper: ToastProvider,
-  });
+  render(
+    <IdentitySettings viewer={viewer} federatedIdentity={bound(h.service)} />,
+    {
+      wrapper: ToastProvider,
+    },
+  );
   expect(screen.getByText("Signed in as a@example.com")).toBeVisible();
   expect(screen.getByText(/builderlab\.example login/)).toBeVisible();
   await userEvent.click(
@@ -126,9 +151,12 @@ it("shows the organization account and signs out of it once", async () => {
 
 it("signs in to the organization once when signed out", async () => {
   const h = federatedFixture();
-  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
-    wrapper: ToastProvider,
-  });
+  render(
+    <IdentitySettings viewer={viewer} federatedIdentity={bound(h.service)} />,
+    {
+      wrapper: ToastProvider,
+    },
+  );
   await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
   expect(h.service.signIn).toHaveBeenCalledTimes(1);
 });
@@ -140,4 +168,24 @@ it("hides organization sign-in without an authority", () => {
     wrapper: ToastProvider,
   });
   expect(screen.queryByText("Organization sign-in")).not.toBeInTheDocument();
+});
+
+it("keeps a failed organization sign-out visible when storage refuses", async () => {
+  const h = federatedFixture();
+  h.publish({ status: "signed-in", email: "a@example.com" });
+  vi.mocked(h.service.signOut).mockImplementationOnce(async () => {
+    h.publish({ status: "unavailable", failure: "storage-busy" });
+  });
+  render(
+    <IdentitySettings viewer={viewer} federatedIdentity={bound(h.service)} />,
+    {
+      wrapper: ToastProvider,
+    },
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Sign out of organization" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Secure storage is busy",
+  );
 });

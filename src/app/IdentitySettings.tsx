@@ -5,7 +5,7 @@ import type { FederatedIdentity } from "../features/federated-identity/service";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
 import { PrivateKey } from "../features/identity/PrivateKey";
 import { SignOutDialog } from "../features/identity/SignOut";
-import { Header } from "../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { IconButton } from "../shared/design-system/ui/IconButton";
@@ -102,7 +102,7 @@ export function IdentitySettings({
               <SettingsGroup>
                 <PreferenceRow
                   title="Sign out of Buzz"
-                  subtitle="Remove your private key from this device. Also ends Builderlab and hosted community logins."
+                  subtitle="Remove your private key from this device. Also signs you out of your organization and ends Builderlab and hosted community logins."
                   trailing={
                     <Button type="button" onClick={() => setSigningOut(true)}>
                       Sign out of Buzz
@@ -146,29 +146,34 @@ function OrganizationSignIn({ identity }: { identity: FederatedIdentity }) {
     identity.snapshot,
   );
   const [failure, setFailure] = useState("");
-  if (
-    !state.authority ||
-    state.status === "unconfigured" ||
-    state.status === "unavailable"
-  )
-    return null;
+  const problem = failure || state.failure;
+  if (!state.authority || state.status === "unconfigured") return null;
+  // Controls hide when unavailable, but a failed sign-out still explains itself.
+  if (state.status === "unavailable")
+    return problem ? (
+      <p role="alert" className="mt-6 text-body-sm text-danger">
+        {recoveryMessage(problem)}
+      </p>
+    ) : null;
   const organization = new URL(state.authority.identityOrigin).host;
   const signedIn = state.status === "signed-in";
   const signingIn = state.status === "signing-in";
   function run(operation: () => Promise<unknown>) {
     setFailure("");
-    void operation().catch((error: unknown) =>
-      setFailure(
-        error instanceof Error ? error.message : "Sign-in unavailable",
-      ),
-    );
+    void Promise.resolve()
+      .then(operation)
+      .catch((error: unknown) =>
+        setFailure(
+          error instanceof Error ? error.message : "Sign-in unavailable",
+        ),
+      );
   }
-  const problem = failure || state.failure;
   return (
     <section className="mt-6" aria-labelledby="organization-sign-in-title">
-      <h3 id="organization-sign-in-title" className="text-body-lg">
-        Organization sign-in
-      </h3>
+      <InlineHeader
+        id="organization-sign-in-title"
+        title="Organization sign-in"
+      />
       <SettingsGroup>
         <PreferenceRow
           title={
@@ -182,12 +187,12 @@ function OrganizationSignIn({ identity }: { identity: FederatedIdentity }) {
               type="button"
               disabled={state.status === "restoring"}
               onClick={() =>
-                run(
+                run(() =>
                   signedIn
-                    ? identity.signOut
+                    ? identity.signOut()
                     : signingIn
-                      ? identity.cancelSignIn
-                      : identity.signIn,
+                      ? identity.cancelSignIn()
+                      : identity.signIn(),
                 )
               }
             >
