@@ -10,17 +10,21 @@ import {
 } from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { useCallback, useRef, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { SoloRegions } from "./SoloRegions";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloHeading } from "../../bundled/channels/SoloHeading";
 import { WorkspaceControl } from "../solo/WorkspaceControl";
 import type { OpenTarget } from "../navigation/targets";
 import { createSoloRegionFixture } from "./solo-navigation-testing";
-import type { SoloRegionProps } from "./solo-navigation-contract";
+import type {
+  SoloRegionAction,
+  SoloRegionProps,
+} from "./solo-navigation-contract";
 import type { Navigation } from "../navigation/controller";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { writeView } from "../../shared/view-state";
+import destinationStyles from "./SoloDestination.module.css";
 
 const disposals: (() => unknown)[] = [];
 afterEach(async () => {
@@ -96,28 +100,93 @@ function mount(
     },
   };
 }
-function Body(props: SoloRegionProps) {
-  const Destination = props.ui.Destination;
+/** A minimal source composition of the host conversation parts. */
+function Row({
+  ui,
+  channelId,
+  label,
+  supporting,
+  menuActions,
+  before,
+  after,
+  rest,
+  secondary,
+  footer,
+  children,
+  tone,
+  dropTarget,
+}: Pick<SoloRegionProps, "ui"> & {
+  channelId: string;
+  label?: string;
+  supporting?: string;
+  menuActions?: SoloRegionAction[];
+  before?: ReactNode;
+  after?: ReactNode;
+  rest?: ReactNode;
+  secondary?: string;
+  footer?: ReactNode;
+  children?: ReactNode;
+  tone?: "default" | "tonal" | "inset";
+  dropTarget?: boolean;
+}) {
+  return (
+    <ui.Conversation
+      channelId={channelId}
+      {...(menuActions ? { menuActions } : {})}
+    >
+      {(c) => (
+        <ui.Card
+          {...(tone ? { tone } : {})}
+          {...(dropTarget ? { dropTarget } : {})}
+          footer={footer}
+          body={children}
+        >
+          <c.Menu>
+            <div>
+              {before}
+              <c.Link
+                label={
+                  <>
+                    {label ?? c.name}
+                    {supporting && " "}
+                    {supporting && <span>{supporting}</span>}
+                  </>
+                }
+                trailing={<c.Unread />}
+              />
+              {after}
+              {rest && <c.Reveal on="rest">{rest}</c.Reveal>}
+              <c.Actions />
+            </div>
+            {secondary && (
+              <c.Link
+                secondary
+                aria-label={`Open ${c.name}: ${secondary}`}
+                label={secondary}
+              />
+            )}
+          </c.Menu>
+        </ui.Card>
+      )}
+    </ui.Conversation>
+  );
+}
+function Body({ ui }: SoloRegionProps) {
   return (
     <>
-      <Destination channelId="owned" />
-      <Destination channelId="chat" label="Must stay outside" />
+      <Row ui={ui} channelId="owned" />
+      <Row ui={ui} channelId="chat" label="Must stay outside" />
     </>
   );
 }
 
-it("forwards an optional card tone while keeping the host default", async () => {
+it("paints the shared card tone and accepted drag target the source chooses", async () => {
   const h = fixture();
   await h.register({
     component: ({ ui }) => (
       <>
-        <ui.Destination
-          channelId="owned"
-          variant="card"
-          cardTone="inset"
-          dropTarget
-        />
-        <ui.Destination channelId="shared" variant="card" />
+        <Row ui={ui} channelId="owned" tone="inset" dropTarget />
+        <Row ui={ui} channelId="shared" tone="tonal" />
       </>
     ),
   });
@@ -306,12 +375,12 @@ it("keeps Destination navigation, unread and local state stable across source up
     component: ({ ui }) => (
       <>
         <input aria-label="View draft" defaultValue="" />
-        <ui.Destination
+        <Row
+          ui={ui}
           channelId="owned"
-          variant="card"
           label="My task"
           supporting="Waiting for review"
-          details={<button type="button">Show workers</button>}
+          footer={<button type="button">Show workers</button>}
           menuActions={[
             {
               id: "custom",
@@ -321,7 +390,7 @@ it("keeps Destination navigation, unread and local state stable across source up
             },
           ]}
         />
-        <ui.Destination channelId="chat" label="Unowned destination" />
+        <Row ui={ui} channelId="chat" label="Unowned destination" />
       </>
     ),
   });
@@ -512,8 +581,8 @@ it.each([
       await h.register({
         component: ({ ui }) => (
           <>
-            <ui.Destination channelId="owned" />
-            <ui.Destination channelId="shared" />
+            <Row ui={ui} channelId="owned" />
+            <Row ui={ui} channelId="shared" />
           </>
         ),
       });
@@ -688,17 +757,19 @@ it.each(["Owned", "Hide tasks", "Open Owned: Supporting"])(
     const h = fixture();
     await h.register({
       component: ({ ui }) => (
-        <ui.Destination
+        <Row
+          ui={ui}
           channelId="owned"
-          variant="card"
-          supporting="Supporting"
-          disclosure={{
-            placement: "trailing",
-            expanded: true,
-            label: "Hide tasks",
-            summary: "",
-            onToggle() {},
-          }}
+          secondary="Supporting"
+          after={
+            <ui.Disclosure
+              label="Hide tasks"
+              summary=""
+              expanded
+              controls="owned-tasks"
+              onToggle={() => {}}
+            />
+          }
         />
       ),
     });
@@ -713,9 +784,9 @@ it("keeps reconnect focus on a nested destination instead of its parent", async 
   const h = fixture();
   await h.register({
     component: ({ ui }) => (
-      <ui.Destination channelId="owned" variant="card">
-        <ui.Destination channelId="shared" indent={1} />
-      </ui.Destination>
+      <Row ui={ui} channelId="owned">
+        <Row ui={ui} channelId="shared" />
+      </Row>
     ),
   });
   mount(h);
@@ -848,29 +919,33 @@ it("allows an unadorned source heading without a placeholder icon", async () => 
   expect(screen.getByRole("button", { name: "Owned" })).toBeVisible();
 });
 
-it.each(["footer", "leading"] as const)(
-  "collapsing workers restores focus to the %s disclosure without selecting the destination",
+it.each(["footer", "row"] as const)(
+  "collapsing workers restores focus to a %s disclosure without selecting the destination",
   async (placement) => {
     const h = fixture();
     function Tree({ ui }: SoloRegionProps) {
       const [expanded, setExpanded] = useState(true);
+      const disclosure = (
+        <ui.Disclosure
+          label={`${expanded ? "Hide" : "Show"} 1 worker`}
+          summary={placement === "footer" ? "1 waiting" : ""}
+          expanded={expanded}
+          controls="owned-workers"
+          onToggle={() => setExpanded(!expanded)}
+        />
+      );
       return (
-        <ui.Destination
+        <Row
+          ui={ui}
           channelId="owned"
-          variant="card"
-          disclosure={{
-            placement,
-            label: `${expanded ? "Hide" : "Show"} 1 worker: 1 waiting`,
-            summary: "1 waiting",
-            expanded,
-            onToggle: () => setExpanded(!expanded),
-            avatars: [<span key="agent">A</span>],
-          }}
+          {...(placement === "footer"
+            ? { footer: disclosure }
+            : { before: disclosure })}
         >
-          {expanded ? (
-            <ui.Destination channelId="shared" indent={1} status="waiting" />
-          ) : undefined}
-        </ui.Destination>
+          <div id="owned-workers">
+            {expanded ? <Row ui={ui} channelId="shared" /> : undefined}
+          </div>
+        </Row>
       );
     }
     await h.register({ component: Tree });
@@ -887,17 +962,9 @@ it.each(["footer", "leading"] as const)(
     const view = mount(h, target);
     const worker = screen.getByRole("button", { name: /^Shared/ });
     worker.focus();
-    expect(worker).toHaveFocus();
     const control = screen.getByRole("button", { name: /^Hide 1 worker/ });
     const primary = screen.getByRole("button", { name: "Owned" });
     expect(primary).not.toContainElement(control);
-    expect(control.closest("button")).toBe(control);
-    expect(control.closest(".navigation-card-row") !== null).toBe(
-      placement !== "footer",
-    );
-    if (placement !== "footer")
-      expect(control).not.toHaveTextContent("1 waiting");
-    else expect(control).toHaveTextContent("1 waiting");
     expect(
       document.getElementById(control.getAttribute("aria-controls") ?? ""),
     ).toContainElement(worker);
@@ -920,70 +987,132 @@ it.each(["footer", "leading"] as const)(
   },
 );
 
-it("toggles the project only from its independent caret", async () => {
+it("opens the conversation from a secondary link without its focus identity, current state or rename", async () => {
   const h = fixture();
-  function Tree({ ui }: SoloRegionProps) {
-    const [expanded, setExpanded] = useState(true);
-    return (
-      <ui.Destination
-        channelId="owned"
-        variant="card"
-        supporting="1 unread hidden"
-        disclosure={{
-          placement: "trailing",
-          label: `${expanded ? "Hide" : "Show"} tasks in Owned`,
-          summary: "",
-          expanded,
-          onToggle: () => setExpanded(!expanded),
-        }}
-      >
-        {expanded ? (
-          <ui.Destination channelId="shared" indent={1} />
-        ) : undefined}
-      </ui.Destination>
-    );
-  }
-  await h.register({ component: Tree });
-  const view = mount(h);
-  const title = screen.getByRole("button", { name: "Owned" });
-  const caret = screen.getByRole("button", { name: "Hide tasks in Owned" });
-  const metadata = screen.getByRole("button", {
-    name: "Open Owned: 1 unread hidden",
+  await h.register({
+    component: ({ ui }) => (
+      <Row ui={ui} channelId="owned" secondary="1 hidden" />
+    ),
   });
-  expect(title).not.toContainElement(metadata);
-  expect(title).not.toContainElement(caret);
-  fireEvent.click(title);
-  expect(caret).toHaveAttribute("aria-expanded", "true");
+  const view = mount(h, {
+    version: 1,
+    kind: "conversation",
+    scope: {
+      communityOrigin: "https://fixture.invalid",
+      viewer: h.session.viewer ?? "",
+    },
+    channelId: "owned",
+  });
+  const primary = screen.getByRole("button", { name: "Owned" });
+  const secondary = screen.getByRole("button", {
+    name: "Open Owned: 1 hidden",
+  });
+  expect(primary).toHaveAttribute("aria-current", "page");
+  expect(primary).toHaveAttribute("data-solo-destination-id", "owned");
+  expect(secondary).not.toHaveAttribute("aria-current");
+  expect(secondary).not.toHaveAttribute("data-solo-destination-id");
+  fireEvent.doubleClick(secondary);
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  fireEvent.click(secondary);
   expect(view.open).toHaveBeenCalledWith(
-    expect.objectContaining({ channelId: "owned" }),
+    expect.objectContaining({ kind: "conversation", channelId: "owned" }),
   );
-  screen.getByRole("button", { name: "Shared" }).focus();
-  fireEvent.click(caret);
-  await waitFor(() => expect(caret).toHaveFocus());
-  expect(caret).toHaveAttribute("aria-expanded", "false");
-  expect(
-    screen.queryByRole("button", { name: "Shared" }),
-  ).not.toBeInTheDocument();
-  expect(view.open).toHaveBeenCalledTimes(1);
-  fireEvent.click(metadata);
-  expect(caret).toHaveAttribute("aria-expanded", "false");
-  expect(view.open).toHaveBeenCalledWith(
-    expect.objectContaining({ channelId: "owned" }),
-  );
-  caret.focus();
-  await userEvent.setup().keyboard("{Enter}");
-  expect(caret).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByRole("button", { name: "Shared" })).toBeVisible();
 });
 
-it.each([
-  { indicator: "priority", indent: 0 as const },
-  { indicator: "activity", indent: 0 as const },
-  { indicator: "priority", indent: 1 as const },
-  { indicator: "activity", indent: 1 as const },
-])(
-  "preserves $indicator unread evidence with row-dot policy for indent $indent",
-  async ({ indicator, indent }) => {
+it("passes the authorized name, preview and selection to the source and honors a rename opt-out", async () => {
+  const h = fixture();
+  h.roster(
+    h.session.channels
+      .list()
+      .channels.map((channel) => ({ ...channel, preview: "A recent message" })),
+  );
+  const seen: {
+    name: string;
+    preview?: string | undefined;
+    selected: boolean;
+  }[] = [];
+  await h.register({
+    component: ({ ui }) => (
+      <>
+        <ui.Conversation channelId="owned">
+          {(c) => {
+            seen.push({
+              name: c.name,
+              preview: c.preview,
+              selected: c.selected,
+            });
+            return <c.Link label="Project title" rename={false} />;
+          }}
+        </ui.Conversation>
+        <ui.Conversation channelId="chat">
+          {() => {
+            throw new Error("An unowned conversation must not render.");
+          }}
+        </ui.Conversation>
+      </>
+    ),
+  });
+  mount(h, {
+    version: 1,
+    kind: "conversation",
+    scope: {
+      communityOrigin: "https://fixture.invalid",
+      viewer: h.session.viewer ?? "",
+    },
+    channelId: "owned",
+  });
+  expect(seen.at(-1)).toEqual({
+    name: "Owned",
+    preview: "A recent message",
+    selected: true,
+  });
+  fireEvent.doubleClick(screen.getByRole("button", { name: "Project title" }));
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+});
+
+it("lets the source place resting content and the overflow menu", async () => {
+  const h = fixture();
+  await h.register({
+    component: ({ ui }) => (
+      <Row
+        ui={ui}
+        channelId="owned"
+        rest={<span role="img" aria-label="Waiting" />}
+      />
+    ),
+  });
+  mount(h);
+  const status = screen.getByRole("img", { name: "Waiting" });
+  const action = screen.getByRole("button", { name: "Actions for Owned" });
+  expect(status.parentElement?.parentElement).toBe(action.parentElement);
+  expect(screen.getByRole("button", { name: "Owned" })).not.toContainElement(
+    action,
+  );
+  expect(status.parentElement).toHaveClass(destinationStyles.rest ?? "rest");
+});
+
+it("withholds every chat menu for a cached conversation", async () => {
+  const h = fixture();
+  h.roster(
+    h.session.channels
+      .list()
+      .channels.map((channel) =>
+        channel.id === "owned" ? { ...channel, cached: true } : channel,
+      ),
+  );
+  await h.register({ component: Body });
+  mount(h);
+  const row = screen.getByRole("button", { name: "Owned" });
+  expect(
+    screen.queryByRole("button", { name: "Actions for Owned" }),
+  ).not.toBeInTheDocument();
+  fireEvent.contextMenu(row);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});
+
+it.each(["priority", "activity"] as const)(
+  "the Unread part carries %s evidence inside the source's link",
+  async (indicator) => {
     const h = fixture();
     const unread = {
       ...h.session.unread.snapshot({ kind: "channel", channelId: "shared" }),
@@ -1016,165 +1145,40 @@ it.each([
       },
     });
     await h.register({
-      component: ({ ui }) => (
-        <ui.Destination
-          channelId="shared"
-          variant="card"
-          indent={indent}
-          status="waiting"
-        />
-      ),
+      component: ({ ui }) => <Row ui={ui} channelId="shared" />,
     });
-    mount(h, {
-      version: 1,
-      kind: "conversation",
-      scope: {
-        communityOrigin: "https://fixture.invalid",
-        viewer: h.session.viewer ?? "",
-      },
-      channelId: "shared",
-    });
-    const worker = screen.getByRole("button", { name: /^Shared/ });
-    expect(worker).toHaveAttribute("aria-current", "page");
-    const status = screen.getByRole("img", { name: "Waiting" });
-    const evidence = screen.getByRole("img", {
-      name: /^1 observed unread messages/,
-    });
-    expect(worker).toContainElement(status);
-    expect(worker).toContainElement(evidence);
-    expect(status).not.toContainElement(evidence);
-    const dot = worker.querySelector(`[data-channel-${indicator}]`);
-    expect(dot).toBeInTheDocument();
-    expect(status).not.toContainElement(dot as HTMLElement);
-    if (indent) expect(dot?.closest(".sr-only")).toContainElement(evidence);
-    else expect(dot?.closest(".sr-only")).toBeNull();
-    expect(status.querySelector("svg")).toHaveAttribute(
-      "width",
-      indent ? "0.75rem" : "0.875rem",
+    mount(h);
+    const row = screen.getByRole("button", { name: /^Shared/ });
+    expect(row).toContainElement(
+      screen.getByRole("img", { name: /^1 observed unread messages/ }),
     );
+    const dot = row.querySelector(`[data-channel-${indicator}]`);
+    expect(dot).toBeInTheDocument();
     if (indicator === "priority")
       expect(dot).toHaveAttribute("aria-hidden", "true");
     else expect(screen.getByRole("img", { name: "1 unread thread" })).toBe(dot);
   },
 );
 
-it("keeps task attention and pin metadata visible when a message preview is available", async () => {
-  const h = fixture();
-  h.roster(
-    h.session.channels
-      .list()
-      .channels.map((channel) => ({ ...channel, preview: "A recent message" })),
-  );
-  await h.register({
-    component: ({ ui }) => (
-      <ui.Destination
-        channelId="owned"
-        supporting="Pinned · worker needs you"
-      />
-    ),
-  });
-  mount(h);
-  const row = screen.getByRole("button", { name: /^Owned/ });
-  expect(row).toHaveTextContent("Pinned · worker needs you");
-  expect(row).not.toHaveTextContent("A recent message");
-});
-
-it.each([
-  {
-    indent: 0 as const,
-    cardTone: "tonal" as const,
-    glyph: "0.875rem",
-    supportingRole: "text-caption",
-  },
-  {
-    indent: 1 as const,
-    cardTone: "tonal" as const,
-    glyph: "0.75rem",
-    supportingRole: "text-caption",
-  },
-  {
-    indent: 0 as const,
-    cardTone: "inset" as const,
-    glyph: "0.875rem",
-    supportingRole: "text-body-sm",
-  },
-  {
-    indent: 1 as const,
-    cardTone: "inset" as const,
-    glyph: "0.75rem",
-    supportingRole: "text-caption",
-  },
-])(
-  "uses the supporting role and status size for $cardTone indent $indent",
-  async ({ indent, cardTone, glyph, supportingRole }) => {
-    const h = fixture();
-    await h.register({
-      component: ({ ui }) => (
-        <ui.Destination
-          channelId="owned"
-          variant="card"
-          indent={indent}
-          cardTone={cardTone}
-          status="waiting"
-          supporting="Task metadata"
-        />
-      ),
-    });
-    mount(h, {
-      version: 1,
-      kind: "conversation",
-      scope: {
-        communityOrigin: "https://fixture.invalid",
-        viewer: h.session.viewer ?? "",
-      },
-      channelId: "owned",
-    });
-    expect(screen.getByText("Task metadata")).toHaveClass(supportingRole);
-    expect(
-      screen.getByRole("img", { name: "Waiting" }).querySelector("svg"),
-    ).toHaveAttribute("width", glyph);
-  },
-);
-
-it("suppresses the preview only for an explicitly empty supporting string", async () => {
-  const h = fixture();
-  h.roster(
-    h.session.channels
-      .list()
-      .channels.map((channel) => ({ ...channel, preview: "A recent message" })),
-  );
-  await h.register({
-    component: ({ ui }) => (
-      <>
-        <ui.Destination channelId="owned" supporting="" />
-        <ui.Destination channelId="shared" />
-      </>
-    ),
-  });
-  mount(h);
-  expect(screen.getByRole("button", { name: "Owned" })).not.toHaveTextContent(
-    "A recent message",
-  );
-  expect(screen.getByRole("button", { name: /^Shared/ })).toHaveTextContent(
-    "A recent message",
-  );
-});
-
-it.each(["leading", "trailing"] as const)(
-  "restores the primary destination after closing its menu beside a %s disclosure",
+it.each(["before", "after"] as const)(
+  "restores the primary destination after closing its menu with a disclosure %s it",
   async (placement) => {
     const h = fixture();
     await h.register({
       component: ({ ui }) => (
-        <ui.Destination
+        <Row
+          ui={ui}
           channelId="owned"
-          variant="card"
-          disclosure={{
-            placement,
-            label: "Show tasks",
-            summary: "",
-            expanded: false,
-            onToggle() {},
+          {...{
+            [placement]: (
+              <ui.Disclosure
+                label="Show tasks"
+                summary=""
+                expanded={false}
+                controls="owned-tasks"
+                onToggle={() => {}}
+              />
+            ),
           }}
         />
       ),

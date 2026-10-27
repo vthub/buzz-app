@@ -18,11 +18,16 @@ incarnation. A source must return increasing revisions with the current binding.
 Header actions remain outside the component error boundary, so a source can offer
 recovery actions while the host renders its channels.
 
-The source owns its content and disclosure controls. It receives the stable
-`ui.Destination` component, which renders only live channels and supplies host
-navigation, current state, unread, menus, and rename. Row and card variants reuse
-`NavigationItem` and `NavigationCard`. Details remain outside the primary button.
-Destinations are not drag sources and cannot file into personal workspaces.
+The source owns its content, presentation, and disclosure controls. It receives
+the stable `ui.Conversation` component. Conversation renders only live channels
+and calls its children with the name, preview, selected state, and bound parts:
+`Link` supplies navigation, current state, focus identity, and rename; `Menu`
+supplies the standard chat menu; `Actions` is its overflow button; `Reveal`
+shows content only at rest or only while the menu is active; and `Unread` shows
+the host unread state. `ui.Card` is the shared
+`NavigationCard`, which owns hover, selection, and drag-target paint. Typography,
+status, and layout inside a row are the source's choice. Conversations are not
+drag sources and cannot file into personal workspaces.
 
 The host retains one JSON state value per scope, viewer, and source key across
 unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stale

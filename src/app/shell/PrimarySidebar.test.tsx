@@ -743,7 +743,11 @@ it("collapsing the contributed task section keeps ordinary chats visible", async
   const h = createSoloRegionFixture(viewer);
   await h.register({
     title: "Nexus",
-    component: ({ ui }) => <ui.Destination channelId="owned" />,
+    component: ({ ui }) => (
+      <ui.Conversation channelId="owned">
+        {(c) => <c.Link label={c.name} />}
+      </ui.Conversation>
+    ),
   });
   const view = render(
     <ToastProvider>

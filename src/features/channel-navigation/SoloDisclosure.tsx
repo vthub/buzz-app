@@ -26,9 +26,7 @@ export function SoloDisclosure(props: SoloDisclosureProps) {
       }}
     >
       <CaretDownIcon size={14} aria-hidden="true" />
-      {props.summary && (
-        <span className={styles.workerSummary}>{props.summary}</span>
-      )}
+      {props.summary && <span className={styles.summary}>{props.summary}</span>}
     </Button>
   );
 }

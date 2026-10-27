@@ -1,10 +1,9 @@
 import {
-  Children,
+  type ReactNode,
   type RefObject,
   type FocusEvent,
   createContext,
   useContext,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -13,7 +12,7 @@ import {
   NavigationCard,
   NavigationItem,
 } from "../../shared/design-system/ui/NavigationItem";
-import { ChatActionsMenu } from "../../bundled/channels/SoloWorkspaces";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SoloChatMenuItems } from "../../bundled/channels/SoloChatMenu";
 import { SoloChatName } from "../../bundled/channels/SoloChatName";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
@@ -23,6 +22,8 @@ import { useChannelNavigation } from "./ChannelNavigationState";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
+  MenuRoot,
+  MenuTrigger,
   MenuPopup,
   MenuGroup,
   MenuIcon,
@@ -30,19 +31,17 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { DotsThreeIcon } from "../../shared/design-system/icons";
 import type { Navigation } from "../navigation/controller";
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { conversationTarget } from "./routes";
 import type { SoloRegion } from "./solo-navigation-model";
-import type { SoloDestinationProps } from "./solo-navigation-contract";
-import {
-  CheckCircleIcon,
-  WarningCircleIcon,
-  ClockIcon,
-  CircleNotchIcon,
-  XCircleIcon,
-} from "../../shared/design-system/icons";
-import { SoloDisclosure } from "./SoloDisclosure";
+import type {
+  SoloCardProps,
+  SoloConversationLinkProps,
+  SoloConversationProps,
+} from "./solo-navigation-contract";
 import rowStyles from "../../bundled/channels/SoloWorkspaces.module.css";
 import styles from "./SoloDestination.module.css";
 
@@ -59,12 +58,23 @@ export const RegionDestinationContext = createContext<
   | undefined
 >(undefined);
 
+type ConversationState = Readonly<{
+  channel: ChannelSummary;
+  selected: boolean;
+  menu: ReactNode;
+  open(): void;
+  rename(): void;
+  focusTarget(): HTMLElement | false;
+}>;
+const ConversationContext = createContext<ConversationState | undefined>(
+  undefined,
+);
+
 /** Stable component identity: a source update never remounts every destination. */
-export function RegionDestination(props: SoloDestinationProps) {
+export function RegionConversation(props: SoloConversationProps) {
   const context = useContext(RegionDestinationContext);
   const handoff = useChannelNavigation();
   const root = useRef<HTMLDivElement>(null);
-  const childrenId = useId();
   const restoreRename = useRef(false);
   const channel = context?.region.channels.find(
     (channel) => channel.id === props.channelId,
@@ -73,41 +83,18 @@ export function RegionDestination(props: SoloDestinationProps) {
   const [dialog, setDialog] = useState<"rename" | "settings" | "share">();
   const [error, setError] = useState<string>();
   const focusProps = useDestinationFocus(root, props.channelId, visible);
+  const focusTarget = () =>
+    root.current?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
+    false;
   useLayoutEffect(() => {
     if (context?.current === props.channelId) context.retryReveal();
     if (restoreRename.current) {
       restoreRename.current = false;
-      root.current
-        ?.querySelector<HTMLElement>("[data-solo-destination-id]")
-        ?.focus();
+      (focusTarget() || undefined)?.focus();
     }
   });
   if (!context || !channel || !visible) return null;
   const { session, navigator, scope, current, active } = context;
-  const selected = current === channel.id;
-  const expanded = !props.indent || selected;
-  const StatusIcon =
-    props.status === "needs-you"
-      ? WarningCircleIcon
-      : props.status === "running"
-        ? CircleNotchIcon
-        : props.status === "failed"
-          ? XCircleIcon
-          : props.status === "done"
-            ? CheckCircleIcon
-            : ClockIcon;
-  const statusLabel =
-    props.status === "needs-you"
-      ? "Needs you"
-      : props.status === "running"
-        ? "Running"
-        : props.status === "failed"
-          ? "Failed"
-          : props.status === "done"
-            ? "Done"
-            : props.status === "waiting"
-              ? "Waiting"
-              : "Scheduled";
   const menu = (
     <>
       <SoloChatMenuItems
@@ -123,9 +110,7 @@ export function RegionDestination(props: SoloDestinationProps) {
                   handoff.openLifecycle(
                     channel,
                     action,
-                    root.current?.querySelector<HTMLElement>(
-                      "[data-solo-destination-id]",
-                    ) ?? undefined,
+                    focusTarget() || undefined,
                   );
               }
             : undefined
@@ -158,137 +143,25 @@ export function RegionDestination(props: SoloDestinationProps) {
       )}
     </>
   );
-  const leadingDisclosure = props.disclosure?.placement === "leading";
-  const trailingDisclosure = props.disclosure?.placement === "trailing";
-  const rowDisclosure = leadingDisclosure || trailingDisclosure;
-  const supporting = props.supporting ?? channel.preview;
-  const disclosure = props.disclosure && (
-    <SoloDisclosure
-      label={props.disclosure.label}
-      summary={rowDisclosure ? "" : props.disclosure.summary}
-      expanded={props.disclosure.expanded}
-      controls={childrenId}
-      onToggle={() => {
-        if (active()) props.disclosure?.onToggle();
-      }}
-    />
-  );
-  const status = props.status && (
-    <span
-      id={`${childrenId}-status`}
-      className={styles.status}
-      role="img"
-      data-status={props.status}
-      title={statusLabel}
-      aria-label={statusLabel}
-    >
-      <StatusIcon size={props.indent ? 12 : 14} />
-      {props.indent && selected ? statusLabel : null}
-    </span>
-  );
-  const unread = <UnreadBadge session={session} channelId={channel.id} />;
-  const destination = (
-    <NavigationItem
-      data-solo-destination-id={channel.id}
-      aria-describedby={
-        trailingDisclosure && status ? `${childrenId}-status` : undefined
-      }
-      label={
-        <span className={styles.label}>
-          <span
-            className={`${styles.heading} ${props.indent ? "text-caption" : props.cardTone === "inset" ? "text-label" : "text-body-sm"}`}
-            data-worker={!!props.indent || undefined}
-            data-compact={!expanded || undefined}
-          >
-            <span className={styles.title}>{props.label ?? channel.name}</span>{" "}
-            {!trailingDisclosure && status}
-          </span>{" "}
-          {!trailingDisclosure && expanded && supporting && (
-            <span
-              className={`${styles.supporting} ${props.cardTone === "inset" && !props.indent ? "text-body-sm" : "text-caption"} text-metadata`}
-            >
-              {supporting}
-            </span>
-          )}
-        </span>
-      }
-      icon={props.leading}
-      trailing={
-        <>
-          {props.trailing}
-          {trailingDisclosure ? null : props.indent ? (
-            <span className="sr-only">{unread}</span>
-          ) : (
-            unread
-          )}
-        </>
-      }
-      selected={current === channel.id}
-      multiline={expanded && (!!props.supporting || props.variant === "card")}
-      onDoubleClick={() => {
-        if (
-          !trailingDisclosure &&
-          active() &&
-          session.channelDetails.available &&
-          !channel.readOnly
-        )
-          setDialog("rename");
-      }}
-      onClick={() => {
-        if (active())
-          void navigator.open(conversationTarget(scope, channel.id));
-      }}
-    />
-  );
-  const row = (
-    <ChatActionsMenu
-      id={channel.id}
-      title={channel.name}
-      className={`${rowStyles.organizedRow} ${props.variant === "card" ? styles.cardRow : ""} ${trailingDisclosure ? styles.trailingRow : ""}`}
-      enabled={!channel.cached}
-      content={menu}
-    >
-      {leadingDisclosure ? (
-        <div className={styles.leadingRow}>
-          {disclosure}
-          {destination}
-        </div>
-      ) : trailingDisclosure ? (
-        <span className={styles.projectHeading}>
-          {destination}
-          {disclosure}
-          <span className={styles.projectIndicators}>
-            {status}
-            {unread}
-          </span>
-        </span>
-      ) : (
-        destination
-      )}
-      {trailingDisclosure && supporting && (
-        <NavigationItem
-          data-solo-project-supporting=""
-          aria-label={`Open ${props.label ?? channel.name}: ${supporting}`}
-          label={
-            <span className={`${styles.supporting} text-body-sm text-metadata`}>
-              {supporting}
-            </span>
-          }
-          onClick={() => {
-            if (active())
-              void navigator.open(conversationTarget(scope, channel.id));
-          }}
-        />
-      )}
-    </ChatActionsMenu>
-  );
+  const state: ConversationState = {
+    channel,
+    selected: current === channel.id,
+    menu,
+    open() {
+      if (active()) void navigator.open(conversationTarget(scope, channel.id));
+    },
+    rename() {
+      if (active() && session.channelDetails.available && !channel.readOnly)
+        setDialog("rename");
+    },
+    focusTarget,
+  };
   return (
     <div
       ref={root}
       data-solo-destination-root={channel.id}
       {...focusProps}
       className={`${styles.destination} ${rowStyles.sidebarContents}`}
-      data-indent={props.indent ?? 0}
     >
       {dialog === "rename" ? (
         <SoloChatName
@@ -300,79 +173,15 @@ export function RegionDestination(props: SoloDestinationProps) {
             setDialog(undefined);
           }}
         />
-      ) : props.variant === "card" ? (
-        <NavigationCard
-          tone={props.cardTone ?? "tonal"}
-          data-drop-target={props.dropTarget || undefined}
-          footer={
-            ((expanded && props.details) ||
-              props.footer ||
-              (props.disclosure && !rowDisclosure)) && (
-              <ContextMenuRoot
-                onOpenChange={(open, event) => {
-                  if (open && channel.cached) event.cancel();
-                }}
-              >
-                <ContextMenuTrigger render={<div />}>
-                  {expanded && props.details}
-                  {props.footer}
-                  {props.disclosure && !rowDisclosure && (
-                    <div className={styles.workerHeading}>
-                      {disclosure}
-                      {!!props.disclosure.avatars?.length && (
-                        <span className={styles.workerAvatars}>
-                          {Children.map(
-                            props.disclosure.avatars.slice(0, 4),
-                            (avatar) => (
-                              <span>{avatar}</span>
-                            ),
-                          )}
-                          {props.disclosure.avatars.length > 4 && (
-                            <span className="text-caption text-metadata">
-                              +{props.disclosure.avatars.length - 4}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </ContextMenuTrigger>
-                <MenuPopup
-                  aria-label={`Actions for ${channel.name}`}
-                  finalFocus={() =>
-                    root.current?.querySelector<HTMLElement>(
-                      "[data-solo-destination-id]",
-                    ) ?? false
-                  }
-                >
-                  {menu}
-                </MenuPopup>
-              </ContextMenuRoot>
-            )
-          }
-          body={
-            props.disclosure ? (
-              <div
-                className={styles.children}
-                id={childrenId}
-                hidden={!props.children}
-              >
-                {props.children}
-              </div>
-            ) : (
-              props.children
-            )
-          }
-        >
-          {row}
-        </NavigationCard>
       ) : (
-        <>
-          {row}
-          {props.details}
-          {props.footer}
-          {props.children}
-        </>
+        <ConversationContext.Provider value={state}>
+          {props.children({
+            name: channel.name,
+            ...(channel.preview ? { preview: channel.preview } : {}),
+            selected: state.selected,
+            ...conversationParts,
+          })}
+        </ConversationContext.Provider>
       )}
       {dialog === "settings" && (
         <WorkspaceSettings
@@ -397,6 +206,134 @@ export function RegionDestination(props: SoloDestinationProps) {
     </div>
   );
 }
+
+function ConversationLink(props: SoloConversationLinkProps) {
+  const state = useContext(ConversationContext);
+  if (!state) return null;
+  const primary = !props.secondary;
+  return (
+    <NavigationItem
+      {...(primary ? { "data-solo-destination-id": state.channel.id } : {})}
+      aria-label={props["aria-label"]}
+      aria-describedby={props["aria-describedby"]}
+      label={props.label}
+      icon={props.icon}
+      trailing={props.trailing}
+      multiline={!!props.multiline}
+      selected={primary && state.selected}
+      onDoubleClick={() => {
+        if (primary && props.rename !== false) state.rename();
+      }}
+      onClick={state.open}
+    />
+  );
+}
+
+function ConversationMenu({ children }: { children: ReactNode }) {
+  const state = useContext(ConversationContext);
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLElement>();
+  if (!state) return null;
+  if (state.channel.cached)
+    return <div className={styles.menu}>{children}</div>;
+  return (
+    <ContextMenuRoot
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setAnchor(undefined);
+      }}
+    >
+      <ContextMenuTrigger
+        render={<div className={styles.menu} />}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setAnchor(event.currentTarget);
+            setOpen(true);
+          }
+        }}
+      >
+        {children}
+      </ContextMenuTrigger>
+      <MenuPopup
+        aria-label={`Actions for ${state.channel.name}`}
+        anchor={anchor}
+        finalFocus={state.focusTarget}
+      >
+        {state.menu}
+      </MenuPopup>
+    </ContextMenuRoot>
+  );
+}
+
+function ConversationActions() {
+  const state = useContext(ConversationContext);
+  if (!state || state.channel.cached) return null;
+  return (
+    <MenuRoot>
+      <MenuTrigger
+        render={(props) => (
+          <IconButton
+            {...props}
+            data-solo-row-action=""
+            variant="bare"
+            size="compact"
+            aria-label={`Actions for ${state.channel.name}`}
+            icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+          />
+        )}
+      />
+      <MenuPopup
+        aria-label={`Actions for ${state.channel.name}`}
+        align="end"
+        finalFocus={state.focusTarget}
+      >
+        {state.menu}
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
+
+function ConversationReveal({
+  on,
+  children,
+}: {
+  on: "rest" | "active";
+  children: ReactNode;
+}) {
+  return (
+    <span className={on === "rest" ? styles.rest : styles.active}>
+      {children}
+    </span>
+  );
+}
+
+function ConversationUnread() {
+  const context = useContext(RegionDestinationContext);
+  const state = useContext(ConversationContext);
+  if (!context || !state) return null;
+  return <UnreadBadge session={context.session} channelId={state.channel.id} />;
+}
+
+/** The shared card; drag-target paint stays a host-owned state. */
+export function RegionCard({ dropTarget, ...props }: SoloCardProps) {
+  return (
+    <NavigationCard {...props} data-drop-target={dropTarget || undefined} />
+  );
+}
+
+const conversationParts = {
+  Link: ConversationLink,
+  Menu: ConversationMenu,
+  Actions: ConversationActions,
+  Reveal: ConversationReveal,
+  Unread: ConversationUnread,
+};
 
 /** Recovery rows use the same focus contract without source actions. */
 export function RecoveryDestination({ channelId }: { channelId: string }) {

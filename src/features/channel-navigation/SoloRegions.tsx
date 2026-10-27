@@ -1,7 +1,8 @@
 import { SoloDisclosure } from "./SoloDisclosure";
 import {
   RegionDestinationContext,
-  RegionDestination,
+  RegionCard,
+  RegionConversation,
   RecoveryDestination,
 } from "./SoloDestination";
 import {
@@ -489,6 +490,7 @@ function RegionAction({
 }
 
 const destinationUi = {
-  Destination: RegionDestination,
+  Conversation: RegionConversation,
+  Card: RegionCard,
   Disclosure: SoloDisclosure,
 };

@@ -63,9 +63,53 @@ export type SoloRegionProps = Readonly<{
     set(value: JsonValue): boolean;
   }>;
   ui: Readonly<{
-    Destination: ComponentType<SoloDestinationProps>;
+    Conversation: ComponentType<SoloConversationProps>;
+    Card: ComponentType<SoloCardProps>;
     Disclosure: ComponentType<SoloDisclosureProps>;
   }>;
+}>;
+/** Host conversation behavior. The source composes the presentation from its parts. */
+export type SoloConversationProps = Readonly<{
+  channelId: string;
+  menuActions?: readonly SoloRegionAction[];
+  /** Not called for a conversation outside this region. Renaming replaces it with the host editor. */
+  children(conversation: SoloConversation): ReactNode;
+}>;
+export type SoloConversation = Readonly<{
+  name: string;
+  preview?: string;
+  selected: boolean;
+  /** Bound to this conversation. Put one primary Link and Actions inside Menu. */
+  Link: ComponentType<SoloConversationLinkProps>;
+  /** Context menu region with the standard chat actions and menuActions. */
+  Menu: ComponentType<Readonly<{ children: ReactNode }>>;
+  /** The overflow menu button. Pointer devices show it only while the Menu is active. */
+  Actions: ComponentType;
+  /** Shows content only at rest, or only while the Menu is hovered, focused, or open. Hidden content keeps its space. */
+  Reveal: ComponentType<
+    Readonly<{ on: "rest" | "active"; children: ReactNode }>
+  >;
+  Unread: ComponentType;
+}>;
+export type SoloConversationLinkProps = Readonly<{
+  label: ReactNode;
+  icon?: ReactNode;
+  trailing?: ReactNode;
+  multiline?: boolean;
+  /** Navigates without focus identity, current state or rename. */
+  secondary?: boolean;
+  /** Double-click renames the primary link unless false. */
+  rename?: boolean;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
+}>;
+/** The shared navigation card; it owns hover, selection and drag-target paint. */
+export type SoloCardProps = Readonly<{
+  tone?: "default" | "tonal" | "inset";
+  dropTarget?: boolean;
+  footer?: ReactNode;
+  body?: ReactNode;
+  children: ReactNode;
 }>;
 export type SoloDisclosureProps = Readonly<{
   label: string;
@@ -73,41 +117,6 @@ export type SoloDisclosureProps = Readonly<{
   expanded: boolean;
   controls: string;
   onToggle(): void;
-}>;
-export type SoloDestinationProps = Readonly<{
-  channelId: string;
-  label?: string;
-  /** Empty suppresses the channel preview; undefined keeps the fallback. */
-  supporting?: string;
-  leading?: ReactNode;
-  trailing?: ReactNode;
-  status?:
-    | "needs-you"
-    | "running"
-    | "failed"
-    | "scheduled"
-    | "waiting"
-    | "done";
-  variant?: "row" | "card";
-  /** Shared card surface; inset uses the inset surface for its own interaction states. */
-  cardTone?: "tonal" | "inset";
-  /** Paint the whole card as the current accepted drag destination. */
-  dropTarget?: boolean;
-  details?: ReactNode;
-  footer?: ReactNode;
-  disclosure?: Readonly<{
-    /** Leading is an always-visible icon beside the primary destination. */
-    /** Trailing puts an independent disclosure immediately after the project title. */
-    placement?: "footer" | "leading" | "trailing";
-    label: string;
-    summary: string;
-    expanded: boolean;
-    avatars?: readonly ReactNode[];
-    onToggle(): void;
-  }>;
-  children?: ReactNode;
-  indent?: 0 | 1 | 2;
-  menuActions?: readonly SoloRegionAction[];
 }>;
 export type SoloNavigation = Readonly<{
   version: 2;
