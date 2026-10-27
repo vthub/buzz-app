@@ -32,8 +32,23 @@ import type { Contribution } from "../../plugins/contributions";
 
 composerDOMFixture();
 afterEach(cleanup);
-afterEach(() => vi.unstubAllGlobals());
-beforeEach(() => localStorage.clear());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+});
+beforeEach(() => {
+  localStorage.clear();
+  // jsdom lacks what the completion popup uses to position and reveal rows.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+});
 const existing = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Engineering",
