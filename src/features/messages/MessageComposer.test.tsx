@@ -10369,6 +10369,36 @@ it("extends a pending chip over the typed words that complete the one longer dir
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
 });
 
+it("keeps the separator typed after the words a pending chip extends over, so later text does not join the name", async () => {
+  // The page lands while the draft ends at `Example `: the remainder that
+  // spells the name is `Example`, not `Example ` (`normalizeName` trims, so
+  // both spell it), and the Space stays outside the chip.
+  const h = mountDirectoryMention();
+  await h.holdMira();
+  await h.user.keyboard("Example ");
+  expect(h.input()).toHaveValue("@mira Example ");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [mira], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@Mira Example "));
+  expect(h.chip("mira")).toBeNull();
+  expect(h.recipients()).toHaveLength(1);
+  await h.user.keyboard("hi");
+  expect(h.input()).toHaveValue("@Mira Example hi");
+  expect(h.recipients()).toHaveLength(1);
+  h.submit();
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Mira Example hi",
+    [],
+  ]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
+});
+
 it("selects a longer directory name on the Space that completes it when its page arrived before the first Space", async () => {
   // The slow typist: a known longer name declines the first Space outright
   // (`continuedMention`), the query stays open, and the second Space selects.

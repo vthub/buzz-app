@@ -1328,7 +1328,10 @@ function Composer({
   }
   /** The longest of `continued` that the chip's name plus the words typed
    * after it, up to a name boundary, spell: the name Space would have needed
-   * typed in full. None when the words complete no name or stop mid-word. */
+   * typed in full. None when the words complete no name or stop mid-word.
+   * The remainder ends on the name's last character: `normalizeName` trims,
+   * so `Example ` spells the same name as `Example`, and extending over the
+   * separator would join the chip to whatever is typed after it. */
   function typedContinuation(
     id: string,
     continued: readonly CompletionPending[],
@@ -1345,7 +1348,8 @@ function Composer({
       const remainder = text.slice(chip.end, end);
       const name = normalizeName(chip.name + remainder);
       if (name.length > longest) break;
-      const next = mentionBoundary(text, end) ? names.get(name) : undefined;
+      if (/\s$/u.test(remainder) || !mentionBoundary(text, end)) continue;
+      const next = names.get(name);
       if (next) found = { remainder, resolve: next.resolve };
     }
     return found;
