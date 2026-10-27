@@ -811,7 +811,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "inside SidebarNavigation",
       "multiline stacked labels",
       "NavigationCard with independent details",
-      "tonal and inset NavigationCard with nested branch interaction",
+      "tonal and inset NavigationCard with nested branch interaction and one hovered surface per sidebar",
       "NavigationCard drag destination enclosure",
     ],
     status: "proposed",

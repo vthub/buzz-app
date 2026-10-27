@@ -1395,7 +1395,9 @@ surfaces. Use `tone="inset"` for a lead destination whose own hover, focus, menu
 and selection use `surface-inset`. Both tones rest transparent, including open
 cards. A contained active branch clears its enclosing cards' fill and border.
 Own row hover, focus, or menu can paint over contained selection; that enclosure
-has one uniform surface until a contained interaction takes priority. A Solo
+has one uniform surface until a contained interaction takes priority. A
+task card hovered inside `SidebarNavigation` temporarily clears the other task
+cards' shading; selected shading returns when the pointer leaves the cards. A Solo
 card's `dropTarget` uses `affordance-sidebar-hover` across its full enclosure;
 it takes priority over selection and clears contained card fills while active.
 Put nested destinations in `body`. Solo destinations keep worker disclosures in

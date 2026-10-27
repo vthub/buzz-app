@@ -1336,10 +1336,12 @@ function NavigationItemSpecimen() {
         </div>
       </SpecimenGroup>
       <SpecimenGroup
-        label="Nested cards — transparent rest, one active branch surface"
-        code={`<NavigationCard tone="inset" body={<NavigationCard tone="tonal">…</NavigationCard>}>
+        label="Nested cards — hover takes priority over selected shading"
+        code={`<SidebarNavigation>
+<NavigationCard tone="inset" body={<NavigationCard tone="tonal">…</NavigationCard>}>
   <NavigationItem label="Project Lead" />
-</NavigationCard>`}
+</NavigationCard>
+</SidebarNavigation>`}
       >
         <Button
           size="sm"
@@ -1349,25 +1351,36 @@ function NavigationItemSpecimen() {
           Toggle drop destination
         </Button>
         <div className="component-navigation-section-demo">
-          <NavigationCard
-            tone="inset"
-            data-drop-target={dropTarget || undefined}
-            body={
-              <NavigationCard tone="tonal">
-                <NavigationItem
-                  label="Member task"
-                  selected={selected === "member"}
-                  onClick={() => setSelected("member")}
-                />
-              </NavigationCard>
-            }
-          >
-            <NavigationItem
-              label="Project Lead"
-              selected={selected === "lead"}
-              onClick={() => setSelected("lead")}
-            />
-          </NavigationCard>
+          <SidebarNavigation>
+            <NavigationCard
+              tone="inset"
+              data-drop-target={dropTarget || undefined}
+              body={
+                <>
+                  <NavigationCard tone="tonal">
+                    <NavigationItem
+                      label="Member task"
+                      selected={selected === "member"}
+                      onClick={() => setSelected("member")}
+                    />
+                  </NavigationCard>
+                  <NavigationCard tone="tonal">
+                    <NavigationItem
+                      label="Sibling task"
+                      selected={selected === "sibling"}
+                      onClick={() => setSelected("sibling")}
+                    />
+                  </NavigationCard>
+                </>
+              }
+            >
+              <NavigationItem
+                label="Project Lead"
+                selected={selected === "lead"}
+                onClick={() => setSelected("lead")}
+              />
+            </NavigationCard>
+          </SidebarNavigation>
         </div>
       </SpecimenGroup>
       <SpecimenGroup

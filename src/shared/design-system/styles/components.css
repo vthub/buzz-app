@@ -1389,6 +1389,10 @@
   .navigation-card-footer {
     padding: var(--space-1) var(--space-2);
   }
+  .navigation-card-footer
+    .buzz-button[data-variant="plain"][data-size="inline"] {
+    color: var(--text-navigation);
+  }
   .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):is(
     :has(
       > .navigation-card-row:hover,
@@ -1513,6 +1517,19 @@
       )
       > .navigation-card-body
   ) .navigation-card:is([data-tone="tonal"], [data-tone="inset"]) {
+    background: transparent;
+    border-color: transparent;
+  }
+  /* A hovered task card is the sidebar's only shaded card until hover leaves. */
+  :where(
+    .buzz-sidebar-navigation:has(
+      .navigation-card
+        > :is(.navigation-card-row, .navigation-card-footer):hover
+    )
+  )
+  .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):where(
+    :not(:has(> :is(.navigation-card-row, .navigation-card-footer):hover))
+  ) {
     background: transparent;
     border-color: transparent;
   }

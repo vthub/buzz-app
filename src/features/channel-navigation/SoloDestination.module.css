@@ -34,12 +34,11 @@
     var(--channel-row-fill-start, 0px) -
     var(--channel-row-fill-end, 0px)
   );
-  margin-inline: var(--channel-row-fill-start, 0px)
-    var(--channel-row-fill-end, 0px);
+  margin-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
   padding-inline-end: calc(
     var(--space-1) +
     var(--space-half) -
-    var(--channel-row-fill-start, 0px)
+    var(--channel-row-fill-start, 0%)
   );
 }
 .trailingRow .projectHeading > [data-solo-destination-id] {
@@ -132,7 +131,6 @@
 .workerHeading > button {
   min-width: 0;
   flex: 1;
-  color: var(--text-navigation);
 }
 .workerHeading [class~="buzz-button-label"] {
   flex: 1;
