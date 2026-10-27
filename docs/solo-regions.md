@@ -26,8 +26,15 @@ supplies the standard chat menu; `Actions` is its overflow button; `Reveal`
 shows content only at rest or only while the menu is active; and `Unread` shows
 the host unread state. `ui.Card` is the shared
 `NavigationCard`, which owns hover, selection, and drag-target paint. Typography,
-status, and layout inside a row are the source's choice. Conversations are not
-drag sources and cannot file into personal workspaces.
+status, and layout inside a row are the source's choice. Source styles may target
+`.navigation-item`, `.navigation-item-trailing`, `.buzz-button-label`,
+`[data-navigation-card]` with its `.navigation-card-row`, `-body`, and `-footer`
+parts, `[data-solo-disclosure]`, `[data-channel-activity]`, and
+`[data-channel-unread]`. They may read `--session-action-size`,
+`--session-trailing-end`, `--project-icon-size`, and `--channel-row-fill-start`
+and `-end` for row geometry. Other host classes and module class names are
+private. Conversations are not drag sources and cannot file into personal
+workspaces.
 
 The host retains one JSON state value per scope, viewer, and source key across
 unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stale

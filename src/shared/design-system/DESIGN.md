@@ -1400,15 +1400,16 @@ task card hovered inside `SidebarNavigation` temporarily clears the other task
 cards' shading; selected shading returns when the pointer leaves the cards. A Solo
 card's `dropTarget` uses `affordance-sidebar-hover` across its full enclosure;
 it takes priority over selection and clears contained card fills while active.
-Put nested destinations in `body`. Solo destinations keep worker disclosures in
+Put nested destinations in `body`. Solo sources compose rows from
+`ui.Conversation` parts and `ui.Disclosure`; see
+[Solo regions](../../../docs/solo-regions.md). Task rows keep worker disclosures in
 `footer` by default; show their summary only while that task or a worker is
-selected. Use `disclosure.placement="leading"` for an always-visible,
-icon-only sibling beside its primary button.
-Use `disclosure.placement="trailing"` for an independent caret immediately after
-the project title. Only the caret toggles the container; the title and supporting
-metadata navigate to the project chat. Own-row hover, keyboard focus, or menu
-interaction reveals the caret; expansion alone does not. More stays at the row
-end, aligned with the same status column as ordinary tasks.
+selected. A project heading puts an independent caret immediately after the
+project title. Only the caret toggles the container; the title and supporting
+metadata navigate to the project chat, and double-click does not rename the title.
+Own-row hover, keyboard focus, or menu interaction reveals the caret through
+`Reveal`; expansion alone does not. More stays at the row end, aligned with the
+same status column as ordinary tasks.
 Keep the worker body mounted and its saved expansion state. Footer disclosures
 put the caret at the inline end:
 closed rows show worker avatars; hover, expansion, or keyboard focus replaces the
