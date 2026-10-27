@@ -100,6 +100,7 @@ import {
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
+import { browserThreadParticipation } from "./thread-participation";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
@@ -931,6 +932,7 @@ export function createRelaySession(
       : {}),
     notify,
     follows: browserThreadFollows(readScope),
+    participation: browserThreadParticipation(readScope),
   });
   const inboxFeed = createInboxFeed({
     // A withheld auxiliary event is not proof of an exhausted history page.
