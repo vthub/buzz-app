@@ -1533,6 +1533,37 @@
     background: transparent;
     border-color: transparent;
   }
+  /* Let pointer travel settle before restoring the selected task's surface. */
+  @media (prefers-reduced-motion: no-preference) {
+    :where(html:not([data-keyboard-navigation]) .buzz-sidebar-navigation)
+      .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):where(
+        :has(> .navigation-card-row [aria-current="page"])
+      ) {
+      transition:
+        background-color var(--duration-fast) var(--easing-state)
+        var(--duration-state),
+        border-color var(--duration-fast) var(--easing-state)
+        var(--duration-state);
+    }
+    :where(
+        .buzz-sidebar-navigation:has(
+          .navigation-card
+            > :is(.navigation-card-row, .navigation-card-footer):hover
+        )
+      )
+      .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):where(
+        :has(> .navigation-card-row [aria-current="page"])
+      ) {
+      transition-delay: 0ms;
+    }
+    .buzz-sidebar-navigation
+      .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):where(
+        :has(> :is(.navigation-card-row, .navigation-card-footer):hover),
+        [data-drop-target]
+      ) {
+      transition: none;
+    }
+  }
   /* Accepted drag destinations override selection and contained interaction paint. */
   .navigation-card[data-drop-target] {
     background: var(--affordance-sidebar-hover);
