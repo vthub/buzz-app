@@ -120,6 +120,16 @@ other comments wake the agent. A watch is saved in Attention on the device and r
 pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
 or when the agent calls it with `stop: true`.
 
+Settings → Plugins → GitHub comment authors limits whose feedback wakes agents,
+since anyone can comment on a public pull request. It holds trusted
+organizations, trusted logins (a bot's ends in `[bot]`) and ignored logins,
+saved on the device. Ignored logins never wake an agent. Until a trusted
+organization or login is saved, everyone else does; after, only trusted logins,
+members of a trusted organization and the signed-in account do. Membership is
+read through `gh` and kept for an hour; feedback whose author's membership
+cannot be read waits for a later poll. Each poll reads the settings again, so a
+change applies to running watches. CI and pull request state are not limited.
+
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each

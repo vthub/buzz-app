@@ -11,6 +11,7 @@ import type { Agent, AgentAttention } from "../../features/agents/service";
 import type { AttentionValue } from "../../features/agents/attention";
 import { POLL_MS, watchPulls } from "./watcher";
 import { pullOf, pullRequest, QUIET_MS, WAKE_LIMIT } from "./watch";
+import { POLICY_KEY } from "./authors";
 
 const agent = "a".repeat(64);
 const root = "f".repeat(64);
@@ -97,14 +98,31 @@ function respond(pull: Pull, input: string) {
   });
 }
 
+/** What gh answers a membership read, when `members` are in the org. */
+function membership(members: readonly string[], input: string) {
+  const { query } = JSON.parse(input) as { query: string };
+  const users = [...query.matchAll(/(u\d+):user\(login:"([^"]+)"\)/g)];
+  return JSON.stringify({
+    data: Object.fromEntries(
+      users.map(([, alias, login]) => [
+        alias,
+        { o0: members.includes(login as string) ? { id: "O" } : null },
+      ]),
+    ),
+  });
+}
+
 function setup(initial: Pull | null = answer()) {
   let gh = initial;
   let texts = true;
-  const runCommand = vi.fn(async (_id: string, input: string) =>
-    !gh || (!texts && "ids" in JSON.parse(input).variables)
+  let members: readonly string[] | null = [];
+  const runCommand = vi.fn(async (_id: string, input: string) => {
+    if (!("variables" in JSON.parse(input)))
+      return members && membership(members, input);
+    return !gh || (!texts && "ids" in JSON.parse(input).variables)
       ? null
-      : respond(gh, input),
-  );
+      : respond(gh, input);
+  });
   const woke = vi.fn();
   const records: Record<string, Record<string, AttentionValue>> = JSON.parse(
     localStorage.getItem("test.attention") ?? "{}",
@@ -240,6 +258,10 @@ function setup(initial: Pull | null = answer()) {
     runCommand,
     gh: (value: Pull | null) => {
       gh = value;
+    },
+    /** Who is in the trusted organization, or null when that cannot be read. */
+    members: (value: readonly string[] | null) => {
+      members = value;
     },
     /** Whether reads of feedback text succeed, as a too-long answer cannot. */
     readsText: (value: boolean) => {
@@ -705,6 +727,41 @@ describe("github_watch_pr", () => {
         .map(([, input]) => JSON.parse(input).variables.ids)
         .filter(Boolean),
     ).toEqual([["R40", "C40"]]);
+    app.dispose();
+  });
+
+  it("tells only feedback from trusted authors, once their organization is known", async () => {
+    localStorage.setItem(
+      POLICY_KEY,
+      JSON.stringify({
+        version: 1,
+        trustedOrganizations: ["block"],
+        trustedAuthors: ["wes"],
+        ignoredAuthors: [],
+      }),
+    );
+    const app = setup();
+    await app.call({ url });
+    app.members(null);
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "wes", body: "body-wes" },
+          { id: "I2", login: "stranger", body: "body-stranger" },
+          { id: "I3", login: "alice", body: "body-alice" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-wes");
+    expect(app.texts()[0]).not.toContain("body-alice");
+    // Membership read once it can be; strangers are never told.
+    app.members(["alice"]);
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(2);
+    expect(app.texts()[1]).toContain("body-alice");
+    expect(app.texts().join("\n")).not.toContain("body-stranger");
     app.dispose();
   });
 

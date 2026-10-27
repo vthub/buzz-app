@@ -29,6 +29,9 @@ export type PullSnapshot = Readonly<{
 export type Feedback = Readonly<{
   id: string;
   author: string;
+  /** Whether the author is a GitHub App, whose login GitHub gives without
+   * `[bot]`. */
+  bot?: true | undefined;
   url: string;
   body: string;
   /** A review's verdict, such as `CHANGES_REQUESTED`. */
@@ -226,9 +229,9 @@ comments(last:50){nodes{id}}
 }}}`;
 // Clipped bodies, FEEDBACK_READ at most, keep this answer under it too.
 const FEEDBACK = `query($ids:[ID!]!){nodes(ids:$ids){__typename id
-... on PullRequestReview{author{login} state body url}
-... on IssueComment{author{login} body url}
-... on PullRequestReviewComment{author{login} body path url}}}`;
+... on PullRequestReview{author{__typename login} state body url}
+... on IssueComment{author{__typename login} body url}
+... on PullRequestReviewComment{author{__typename login} body path url}}}`;
 
 /** The `gh api graphql --input -` request body that reads `pull`. */
 export function pullRequest(pull: NonNullable<ReturnType<typeof pullOf>>) {
@@ -354,6 +357,10 @@ export function parseFeedback(output: string): Feedback[] | undefined {
       {
         id: `${kind}/${str(node.id)}`,
         author: login(node),
+        ...((node.author as { __typename?: unknown } | null)?.__typename ===
+        "Bot"
+          ? { bot: true as const }
+          : {}),
         url: str(node.url),
         body,
         ...(kind === "review" ? { state: str(node.state) } : {}),
