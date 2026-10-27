@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -23,6 +24,7 @@ import {
   SoloWorkspaces,
   type ChatListItem,
 } from "./SoloWorkspaces";
+import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
 import { readView } from "../../shared/view-state";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -769,4 +771,59 @@ it("offers Show less for retained chats in a never-expanded workspace", async ()
   expect(
     screen.getByRole("button", { name: "Show more chats in Chats" }),
   ).toHaveFocus();
+});
+
+it("rejects a late personal move through the same owner used by menu selections and drops", async () => {
+  const h = createSoloRegionFixture();
+  const write = vi.fn(async () => ({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { owned: "work" },
+    starred: [],
+    muted: [],
+  }));
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    available: true,
+    groupsOnly: true,
+    write,
+  });
+  try {
+    await preferences.queries.ensure();
+    Object.assign(h.session, { soloPreferences: preferences.queries });
+    const channel = h.session.channels
+      .list()
+      .channels.find((item) => item.id === "owned");
+    if (!channel) throw new Error("Missing owned channel");
+    h.roster([{ ...channel, labels: ["buzz.solo"] }]);
+    render(
+      <SoloWorkspaces
+        session={h.session}
+        scope={h.scope}
+        chats={[{ id: "owned", title: "Owned" }]}
+        renderChat={(item) => <button type="button">{item.title}</button>}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Actions for Owned" }));
+    (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+    await user.keyboard("{ArrowRight}");
+    const target = await screen.findByRole("menuitem", { name: "Work" });
+    await act(async () => {
+      h.roster([channel]);
+      fireEvent.click(target);
+    });
+    expect(write).not.toHaveBeenCalled();
+    expect(
+      preferences.queries.snapshot().data?.assignments.owned,
+    ).toBeUndefined();
+  } finally {
+    cleanup();
+    preferences.dispose();
+    await h.dispose();
+  }
 });

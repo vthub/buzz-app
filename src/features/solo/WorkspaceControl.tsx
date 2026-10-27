@@ -1,3 +1,5 @@
+import { useSoloNavigation } from "../channel-navigation/solo-navigation-react";
+import { prepareSoloMove } from "../channel-navigation/solo-navigation";
 import { useEffect, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
@@ -27,6 +29,7 @@ export function WorkspaceControl({
   channelId?: string | undefined;
   disabled?: boolean;
 }) {
+  const regions = useSoloNavigation(session);
   const [snapshot, setSnapshot] = useState(() =>
     session.soloPreferences.snapshot(),
   );
@@ -49,6 +52,11 @@ export function WorkspaceControl({
       return;
     }
     if (!channelId) return;
+    const blocked = prepareSoloMove(session, channelId);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
     setBusy(true);
     void session.soloPreferences
       .assign(channelId, next || undefined)
@@ -58,6 +66,7 @@ export function WorkspaceControl({
       .finally(() => setBusy(false));
   };
   const name = project ? `Workspace: ${project.name}` : "Add workspace";
+  if (channelId && regions.excluded.has(channelId)) return null;
   return (
     <span>
       <MenuRoot>

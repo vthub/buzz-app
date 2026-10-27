@@ -1,3 +1,6 @@
+import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
+import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
+import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import {
   useCallback,
   useEffect,
@@ -77,6 +80,10 @@ export function SoloToolbar({
   onLifecycle,
   onMove,
 }: SoloToolbarProps) {
+  const regions = useSoloNavigation(session);
+  const region = regions.regions.find((region) =>
+    region.channels.some((item) => item.id === channel.id),
+  );
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
   const [settingsOpen, setSettingsOpen] = useState<{
@@ -90,6 +97,16 @@ export function SoloToolbar({
   const preferences = session.soloPreferences;
   return (
     <>
+      {region && (
+        <Button
+          size="sm"
+          variant="ghost"
+          shape="capsule"
+          onClick={() => soloNavigationFor(session)?.reveal(channel.id)}
+        >
+          In {region.title}
+        </Button>
+      )}
       {channel.archived ? (
         <span>Archived</span>
       ) : (
@@ -107,7 +124,7 @@ export function SoloToolbar({
       )}
       {/* Archived chats keep their lifecycle actions, including Unarchive. */}
       {!channel.readOnly && !channel.cached && (
-        <MenuRoot>
+        <MenuRoot key={regions.binding?.incarnation ?? "recovery"}>
           <MenuTrigger
             render={
               <IconButton
@@ -137,9 +154,10 @@ export function SoloToolbar({
               channel={channel}
               onShare={() => setSharing({ visit: signal })}
               onConvert={onConvert && (() => onConvert(actionsTrigger.current))}
-              onMove={(projectId) =>
-                onMove(preferences.assign(channel.id, projectId))
-              }
+              onMove={(projectId) => {
+                if (!prepareSoloMove(session, channel.id))
+                  onMove(preferences.assign(channel.id, projectId));
+              }}
               onNewWorkspace={() => setCreatingWorkspace(true)}
               onSettings={() =>
                 setSettingsOpen({
@@ -173,7 +191,8 @@ export function SoloToolbar({
           finalFocus={actionsTrigger}
           close={() => setCreatingWorkspace(false)}
           create={(name) => {
-            if (!preferences.writable) return false;
+            if (!preferences.writable || prepareSoloMove(session, channel.id))
+              return false;
             onMove(
               preferences.createAndAssign(channel.id, {
                 id: crypto.randomUUID(),
@@ -261,7 +280,10 @@ export function useSoloMoveRecovery(session: RelaySession) {
           <Button
             size="sm"
             disabled={!preferences.writable}
-            onClick={() => track(channelId, preferences.retryMove(channelId))}
+            onClick={() =>
+              !prepareSoloMove(session, channelId) &&
+              track(channelId, preferences.retryMove(channelId))
+            }
           >
             Retry move
           </Button>

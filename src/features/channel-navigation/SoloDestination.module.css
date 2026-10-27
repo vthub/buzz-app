@@ -1,0 +1,257 @@
+.destination {
+  min-width: 0;
+}
+.destination[data-indent]:not([data-indent="0"]) {
+  --solo-status-size: 0.75rem;
+}
+.leadingRow {
+  display: flex;
+  align-items: flex-start;
+  padding-inline-start: var(--space-2);
+}
+.leadingRow > [data-solo-disclosure] {
+  flex-shrink: 0;
+  margin-block-start: var(--space-1);
+}
+.leadingRow > [data-solo-destination-id] {
+  flex: 1;
+  min-width: 0;
+}
+.trailingRow {
+  flex-direction: column;
+  align-items: stretch;
+  --solo-heading-height: max(
+    var(--space-6),
+    calc(var(--text-label) * var(--text-label--line-height))
+  );
+}
+.projectHeading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  width: calc(
+    100% -
+    var(--channel-row-fill-start, 0px) -
+    var(--channel-row-fill-end, 0px)
+  );
+  margin-inline: var(--channel-row-fill-start, 0px)
+    var(--channel-row-fill-end, 0px);
+  padding-inline-end: calc(
+    var(--space-1) +
+    var(--space-half) -
+    var(--channel-row-fill-start, 0px)
+  );
+}
+.trailingRow .projectHeading > [data-solo-destination-id] {
+  flex: 0 1 auto;
+  width: auto;
+  margin: 0;
+}
+.projectIndicators {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  gap: var(--space-row-gap);
+}
+.projectHeading > [data-solo-disclosure] svg {
+  opacity: 0;
+}
+.trailingRow > [data-solo-project-supporting] {
+  height: auto;
+  min-height: 0;
+  padding-block: 0;
+}
+.label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Reuse the former task card's single surface; a nested chat menu must not repaint it. */
+.cardRow::before {
+  display: none;
+}
+.supporting {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-metadata);
+}
+.status[data-status="needs-you"] svg,
+.status[data-status="running"] svg,
+.status[data-status="waiting"] svg {
+  color: var(--text-warning);
+}
+.status[data-status="failed"] svg {
+  color: var(--text-danger);
+}
+
+.status[data-status="done"] svg {
+  color: var(--text-success);
+}
+.workerHeading {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+/* Mounted workers that are all hidden must not leave an empty body gutter. */
+.destination
+  > [data-navigation-card]
+  > [class~="navigation-card-body"]:has(> .children):not(
+    :has(> .children > :not([hidden]))
+  ) {
+  display: none;
+}
+/* Show only the containing card's summary along the selected worker's ancestry. */
+.destination
+  > [data-navigation-card]
+  > [class~="navigation-card-footer"]:has(> div > .workerHeading:only-child) {
+  display: none;
+}
+.destination
+  > [data-navigation-card]:has(
+    [class~="navigation-card-row"] [aria-current="page"]
+  )
+  > [class~="navigation-card-footer"] {
+  .workerHeading {
+    display: flex;
+  }
+  &:has(> div > .workerHeading:only-child) {
+    display: block;
+  }
+}
+.workerHeading > button {
+  min-width: 0;
+  flex: 1;
+  color: var(--text-navigation);
+}
+.workerHeading [class~="buzz-button-label"] {
+  flex: 1;
+  justify-content: flex-start;
+}
+.workerHeading [data-solo-disclosure] svg {
+  display: none;
+  order: 1;
+  margin-inline-start: auto;
+}
+[data-solo-disclosure][aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+.workerSummary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.workerAvatars {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding-inline-start: var(--space-1);
+}
+.workerAvatars > span {
+  display: inline-flex;
+  margin-inline-start: calc(-1 * var(--space-1));
+}
+
+.workerHeading:is(:hover, :has([aria-expanded="true"]), :has(:focus-visible)) {
+  [data-solo-disclosure] svg {
+    display: block;
+  }
+  .workerAvatars {
+    display: none;
+  }
+}
+
+.heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.heading[data-worker] {
+  flex-wrap: wrap;
+  row-gap: var(--space-half);
+}
+.heading[data-compact] {
+  flex-wrap: nowrap;
+}
+.heading .status {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+.cardRow
+  [class~="navigation-item-trailing"]:not(
+    :has(> :not([data-channel-unread], [class~="sr-only"]))
+  ) {
+  /* Keep unread accessibility evidence without an empty flex slot. */
+  position: absolute;
+}
+[data-navigation-card] .cardRow [data-channel-activity] {
+  /* Task status and thread evidence occupy separate places in the select row. */
+  position: static;
+  transform: none;
+  margin: 0;
+}
+@media (hover: hover) {
+  .cardRow:is(
+      :hover,
+      [data-context-menu-present],
+      :has(:focus-visible),
+      :has([aria-expanded="true"][aria-haspopup="menu"])
+    )
+    .status {
+    opacity: 0;
+  }
+  [data-navigation-card] .cardRow [data-solo-row-action] {
+    top: calc(var(--space-half) + 0.5lh);
+    /* Center the menu's artwork on the status glyph, not its hit target. */
+    inset-inline-end: calc(
+      var(--session-trailing-end) -
+      (var(--session-action-size) - var(--solo-status-size, 0.875rem)) /
+      2
+    );
+  }
+}
+[data-navigation-card] .trailingRow [data-solo-row-action] {
+  top: calc(var(--space-half) + var(--solo-heading-height) / 2);
+  transform: translateY(-50%);
+}
+.trailingRow .heading {
+  align-items: center;
+  min-height: var(--solo-heading-height);
+}
+.trailingRow:is(
+  :hover,
+  [data-context-menu-present],
+  :has(:focus-visible),
+  :has([aria-expanded="true"][aria-haspopup="menu"])
+) {
+  [data-solo-disclosure] svg {
+    opacity: 1;
+  }
+  .projectIndicators {
+    padding-inline-start: var(--session-action-size);
+  }
+  .status,
+  [data-channel-priority] {
+    opacity: 0;
+  }
+}

@@ -104,6 +104,7 @@ export function useSidebarView(
   const intent = useRef(view);
   const list = useRef<HTMLElement>(null);
   const pending = useRef(true);
+  const latestLocation = useRef(location);
   useLayoutEffect(
     () =>
       subscribeView(scope, () => {
@@ -167,15 +168,31 @@ export function useSidebarView(
   // resolves to a conversation) stays pending. It owns the saved position
   // only if the user scrolls there.
   useLayoutEffect(() => {
+    latestLocation.current = location;
     reveal.current = location === restored.current ? undefined : location;
   }, [location]);
   // The entry can render after navigation (roster startup, a new DM), so
   // retry after each commit until it exists. Runs after the restore above.
   const attempt = useRef(() => {});
+  const preparations = useRef(new Set<(location: string) => boolean>());
+  const beforeReveal = useCallback((prepare: (location: string) => boolean) => {
+    preparations.current.add(prepare);
+    return () => {
+      preparations.current.delete(prepare);
+    };
+  }, []);
+  // Only an explicit reveal of the current destination may reclaim the viewport.
+  const revealAgain = useCallback(() => {
+    if (latestLocation.current === undefined) return;
+    reveal.current = latestLocation.current;
+    attempt.current();
+  }, []);
   const retryReveal = useCallback(() => attempt.current(), []);
   useLayoutEffect(() => {
     attempt.current = () => {
       if (!ready || !reveal.current || !list.current) return;
+      for (const prepare of preparations.current)
+        if (!prepare(reveal.current)) return;
       const top = revealCurrent(list.current);
       if (top === false) return;
       moved.current = scroll(list.current, top) ?? moved.current;
@@ -251,5 +268,7 @@ export function useSidebarView(
     setContributionOrder,
     toggle,
     retryReveal,
+    revealAgain,
+    beforeReveal,
   };
 }

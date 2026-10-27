@@ -1,3 +1,4 @@
+import { prepareSoloMove } from "../channel-navigation/solo-navigation";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
@@ -31,7 +32,8 @@ export function canConvertToChannel(
     (channel.channelType === "solo" || !!chatConversion(session, channel.id)) &&
     !channel.cached &&
     !channel.readOnly &&
-    !channel.archived
+    !channel.archived &&
+    !prepareSoloMove(session, channel.id)
   );
 }
 
@@ -130,7 +132,8 @@ export function ConvertToChannel({
       !controller ||
       controller.signal.aborted ||
       signal?.aborted ||
-      pending.current
+      pending.current ||
+      prepareSoloMove(session, id)
     )
       return;
     const active = AbortSignal.any([

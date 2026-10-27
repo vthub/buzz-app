@@ -84,7 +84,10 @@ import { TypingDots } from "../../../../src/shared/design-system/ui/TypingDots";
 import { InlineChip } from "../../../../src/shared/design-system/ui/InlineChip";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
-import { NavigationItem } from "../../../../src/shared/design-system/ui/NavigationItem";
+import {
+  NavigationCard,
+  NavigationItem,
+} from "../../../../src/shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../../../../src/shared/design-system/ui/NavigationSection";
 import {
   PanelHeader,
@@ -1265,6 +1268,7 @@ function SidebarNavigationSpecimen() {
 function NavigationItemSpecimen() {
   const [selected, setSelected] = useState("buzz-design");
   const [selectedPill, setSelectedPill] = useState("Notes");
+  const [dropTarget, setDropTarget] = useState(false);
   return (
     <div className="component-specimen-stack">
       {/* Interactive: clicking moves `selected`, so the selected fill and the
@@ -1301,6 +1305,69 @@ function NavigationItemSpecimen() {
             selected={selected === "desktop-new"}
             onClick={() => setSelected("desktop-new")}
           />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Card — multiline destination and independent detail action"
+        code={`<NavigationCard tone="tonal" footer={<Button size="sm">View details</Button>}>
+  <NavigationItem label="A destination with supporting text" multiline selected />
+</NavigationCard>`}
+      >
+        <div className="component-navigation-section-demo">
+          <NavigationCard
+            tone="tonal"
+            footer={<Button size="sm">View details</Button>}
+          >
+            <NavigationItem
+              label={
+                <>
+                  Session interaction model
+                  <br />
+                  <span className="text-body-sm text-metadata">
+                    Waiting for your review
+                  </span>
+                </>
+              }
+              multiline
+              selected={selected === "card"}
+              onClick={() => setSelected("card")}
+            />
+          </NavigationCard>
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Nested cards — transparent rest, one active branch surface"
+        code={`<NavigationCard tone="inset" body={<NavigationCard tone="tonal">…</NavigationCard>}>
+  <NavigationItem label="Project Lead" />
+</NavigationCard>`}
+      >
+        <Button
+          size="sm"
+          aria-pressed={dropTarget}
+          onClick={() => setDropTarget(!dropTarget)}
+        >
+          Toggle drop destination
+        </Button>
+        <div className="component-navigation-section-demo">
+          <NavigationCard
+            tone="inset"
+            data-drop-target={dropTarget || undefined}
+            body={
+              <NavigationCard tone="tonal">
+                <NavigationItem
+                  label="Member task"
+                  selected={selected === "member"}
+                  onClick={() => setSelected("member")}
+                />
+              </NavigationCard>
+            }
+          >
+            <NavigationItem
+              label="Project Lead"
+              selected={selected === "lead"}
+              onClick={() => setSelected("lead")}
+            />
+          </NavigationCard>
         </div>
       </SpecimenGroup>
       <SpecimenGroup

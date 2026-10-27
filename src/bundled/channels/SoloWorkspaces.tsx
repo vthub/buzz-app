@@ -1,3 +1,4 @@
+import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { ChatSharedMark } from "./ChatSharedMark";
@@ -236,6 +237,7 @@ export function SoloWorkspaces({
     project.rows.some((item) => item.id === renaming),
   )?.id;
   const move = (id: string, projectId?: string) => {
+    if (prepareSoloMove(session, id)) return;
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
     hold([id]);
@@ -731,6 +733,7 @@ export function SoloWorkspaces({
             <Button
               disabled={!preferences.writable}
               onClick={() =>
+                !prepareSoloMove(session, move.channelId) &&
                 void preferences.retryMove(move.channelId).catch(() => {})
               }
             >
@@ -758,7 +761,11 @@ export function SoloWorkspaces({
           name={creatingFor.title}
           close={() => setCreatingFor(undefined)}
           create={(name) => {
-            if (!preferences.writable) return false;
+            if (
+              !preferences.writable ||
+              prepareSoloMove(session, creatingFor.id)
+            )
+              return false;
             const id = crypto.randomUUID();
             void preferences
               .createAndAssign(creatingFor.id, { id, name })
@@ -793,7 +800,7 @@ function DropProject({
 }
 
 /** Both entry points use one action list; right-click never selects the row. */
-function ChatActionsMenu({
+export function ChatActionsMenu({
   id,
   title,
   className,
@@ -815,9 +822,14 @@ function ChatActionsMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
-  const restoreFocus = () =>
-    document.querySelector<HTMLElement>(`[data-solo-menu-id="${id}"] button`) ??
-    false;
+  const restoreFocus = () => {
+    const row = document.querySelector(`[data-solo-menu-id="${id}"]`);
+    return (
+      row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
+      row?.querySelector<HTMLElement>("button") ??
+      false
+    );
+  };
   if (!enabled)
     return (
       <div className={className} data-solo-menu-id={id}>

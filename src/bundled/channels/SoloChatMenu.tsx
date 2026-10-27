@@ -1,3 +1,4 @@
+import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
 import {
   type ComponentProps,
   useId,
@@ -51,8 +52,8 @@ export function SoloChatMenuItems({
   onShare(): void;
   /** Absent where no host can finish a conversion. */
   onConvert?: (() => void) | undefined;
-  onMove(projectId?: string): void;
-  onNewWorkspace(): void;
+  onMove?(projectId?: string): void;
+  onNewWorkspace?(): void;
   onSettings(): void;
   /** Absent where no owner can confirm lifecycle actions. */
   onLifecycle?: ((action: ChannelLifecycleAction) => void) | undefined;
@@ -60,6 +61,7 @@ export function SoloChatMenuItems({
   onReadResult(error?: string): void;
 }) {
   const handoff = useChannelNavigation();
+  const regions = useSoloNavigation(session);
   const preferences = session.soloPreferences;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
@@ -104,25 +106,28 @@ export function SoloChatMenuItems({
         </MenuIcon>
         Chat settings
       </MenuItem>
-      {active && (
-        <MenuSubmenu>
-          <MenuSubmenuTrigger disabled={!preferences.writable}>
-            <MenuIcon>
-              <FolderSimpleIcon size={14} />
-            </MenuIcon>
-            Move to
-          </MenuSubmenuTrigger>
-          <MenuSubmenuPopup aria-label="Workspace">
-            {grouped && <MenuItem onClick={() => onMove()}>Chats</MenuItem>}
-            {groups.map((group) => (
-              <MenuItem key={group.id} onClick={() => onMove(group.id)}>
-                {group.name}
-              </MenuItem>
-            ))}
-            <MenuItem onClick={onNewWorkspace}>New workspace</MenuItem>
-          </MenuSubmenuPopup>
-        </MenuSubmenu>
-      )}
+      {active &&
+        !regions.excluded.has(channel.id) &&
+        onMove &&
+        onNewWorkspace && (
+          <MenuSubmenu>
+            <MenuSubmenuTrigger disabled={!preferences.writable}>
+              <MenuIcon>
+                <FolderSimpleIcon size={14} />
+              </MenuIcon>
+              Move to
+            </MenuSubmenuTrigger>
+            <MenuSubmenuPopup aria-label="Workspace">
+              {grouped && <MenuItem onClick={() => onMove()}>Chats</MenuItem>}
+              {groups.map((group) => (
+                <MenuItem key={group.id} onClick={() => onMove(group.id)}>
+                  {group.name}
+                </MenuItem>
+              ))}
+              <MenuItem onClick={onNewWorkspace}>New workspace</MenuItem>
+            </MenuSubmenuPopup>
+          </MenuSubmenu>
+        )}
       <MenuSeparator />
       {active && (
         <MenuItem
@@ -136,14 +141,17 @@ export function SoloChatMenuItems({
         </MenuItem>
       )}
       <ChannelCopyLinkMenuItem channelId={channel.id} />
-      {active && onConvert && canConvertToChannel(session, channel) && (
-        <MenuItem onClick={onConvert}>
-          <MenuIcon>
-            <HashArrowInIcon size={14} />
-          </MenuIcon>
-          {conversionLabel(session, channel.id)}
-        </MenuItem>
-      )}
+      {active &&
+        !regions.excluded.has(channel.id) &&
+        onConvert &&
+        canConvertToChannel(session, channel) && (
+          <MenuItem onClick={onConvert}>
+            <MenuIcon>
+              <HashArrowInIcon size={14} />
+            </MenuIcon>
+            {conversionLabel(session, channel.id)}
+          </MenuItem>
+        )}
       {onLifecycle && !channel.readOnly && !channel.cached && (
         <ChannelLifecycleMenu
           channelId={channel.id}

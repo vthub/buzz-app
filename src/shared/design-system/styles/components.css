@@ -1353,6 +1353,184 @@
      Base UI Button's native button behavior. It does not compose Buzz Button:
      a navigation destination is not an ordinary action button, and sharing the
      styling made the generic ghost hover compete with navigation's own states. */
+  .navigation-card {
+    display: block;
+    border-radius: var(--radius-row);
+    color: var(--text-standard);
+    --interaction-row-hover: transparent;
+    --interaction-selected: transparent;
+    --interaction-pressed: transparent;
+  }
+  .navigation-card-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .navigation-card-row > :first-child {
+    flex: 1;
+    min-width: 0;
+  }
+  .navigation-card-body {
+    padding-block-end: var(--space-1);
+  }
+  .navigation-card-body:has(> [hidden]:only-child) {
+    display: none;
+  }
+  .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
+    > .navigation-card-body > :not([hidden])
+  ) {
+    background: var(--affordance-subtle);
+  }
+  .navigation-card-footer:empty,
+  .navigation-card-body:empty {
+    display: none;
+  }
+  .navigation-card-footer {
+    padding: var(--space-1) var(--space-2);
+  }
+  .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):is(
+    :has(
+      > .navigation-card-row:hover,
+      > .navigation-card-footer:hover,
+      > .navigation-card-row :focus-visible,
+      > .navigation-card-footer :focus-visible,
+      > .navigation-card-row [data-context-menu-present],
+      > .navigation-card-row [aria-expanded="true"][aria-haspopup="menu"]
+    ),
+    [data-context-menu-present]
+  ):not(:has(> .navigation-card-row [aria-current="page"])) {
+    background: var(--affordance-panel-hover);
+  }
+  .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
+    > .navigation-card-row [aria-current="page"]
+  ) {
+    background: var(--surface-sidebar-selected);
+  }
+  .navigation-card:has(> .navigation-card-row [aria-current="page"])
+    > :is(.navigation-card-row, .navigation-card-footer) {
+    --text-subtle: var(--text-row-selected-subtle);
+  }
+  /* Task navigation has a tonal selected surface; the card still owns all paint. */
+  .navigation-card:is([data-tone="tonal"], [data-tone="inset"]) {
+    --affordance-panel-hover: var(--affordance-subtle-hover);
+    --text-row-selected: var(--text-standard);
+    --text-row-selected-subtle: var(--text-metadata);
+    --text-row-selected-metadata: var(--text-metadata);
+    --interaction-selected-text: var(--text-row-selected-subtle);
+    --interaction-selected-metadata: var(--text-metadata);
+    --interaction-row-text: var(--text-subtle);
+    --interaction-row-metadata: var(--text-metadata);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-chip);
+  }
+  .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):where(
+    :is(
+      :has(
+        > :is(.navigation-card-row, .navigation-card-footer):hover,
+        > :is(.navigation-card-row, .navigation-card-footer)
+          :is(
+            :focus-visible,
+            [data-context-menu-present],
+            [aria-expanded="true"][aria-haspopup="menu"]
+          )
+      ),
+      [data-context-menu-present]
+    ):not(:has(> .navigation-card-row [aria-current="page"]))
+  ) {
+    background: var(--affordance-panel-hover);
+  }
+  /* Contained destinations align at every depth rather than adding tree insets. */
+  :where(.navigation-card-body)
+  .navigation-card:is([data-tone="tonal"], [data-tone="inset"]) {
+    border-inline-width: 0;
+  }
+  .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):where(
+    :has(> .navigation-card-row [aria-current="page"])
+  ) {
+    background: var(--affordance-selected);
+    border-color: var(--border-standard);
+  }
+  .navigation-card[data-tone="inset"] {
+    --affordance-panel-hover: var(--surface-inset);
+  }
+  .navigation-card[data-tone="inset"]:where(
+    :has(> .navigation-card-row [aria-current="page"])
+  ) {
+    background: var(--surface-inset);
+  }
+  /* Deeper interaction wins. Own interaction may still paint over child selection. */
+  .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):where(
+    :has(> .navigation-card-body .navigation-card:hover),
+    :has(
+      > .navigation-card-body
+        :is(
+          :focus-visible,
+          [data-context-menu-present],
+          [aria-expanded="true"][aria-haspopup="menu"]
+        )
+    ),
+    :has(> .navigation-card-body [aria-current="page"]):not(
+      :has(
+        > :is(.navigation-card-row, .navigation-card-footer):hover,
+        > :is(.navigation-card-row, .navigation-card-footer)
+          :is(
+            :focus-visible,
+            [data-context-menu-present],
+            [aria-expanded="true"][aria-haspopup="menu"]
+          )
+      ),
+      [data-context-menu-present]
+    )
+  ) {
+    background: transparent;
+    border-color: transparent;
+  }
+  /* An active enclosing row owns one uniform surface until a child is interacted with. */
+  :where(
+    .navigation-card:is([data-tone="tonal"], [data-tone="inset"]):is(
+        :has(
+          > :is(.navigation-card-row, .navigation-card-footer):hover,
+          > :is(.navigation-card-row, .navigation-card-footer)
+            :is(
+              :focus-visible,
+              [data-context-menu-present],
+              [aria-expanded="true"][aria-haspopup="menu"]
+            )
+        ),
+        [data-context-menu-present]
+      ):not(
+        :has(
+          > .navigation-card-body .navigation-card:hover,
+          > .navigation-card-body
+            :is(
+              :focus-visible,
+              [data-context-menu-present],
+              [aria-expanded="true"][aria-haspopup="menu"]
+            )
+        )
+      )
+      > .navigation-card-body
+  ) .navigation-card:is([data-tone="tonal"], [data-tone="inset"]) {
+    background: transparent;
+    border-color: transparent;
+  }
+  /* Accepted drag destinations override selection and contained interaction paint. */
+  .navigation-card[data-drop-target] {
+    background: var(--affordance-sidebar-hover);
+    border-color: var(--border-standard);
+  }
+  .navigation-card[data-drop-target] .navigation-card {
+    background: transparent;
+    border-color: transparent;
+  }
+  .navigation-item[data-multiline] {
+    height: auto;
+    min-height: var(--space-8);
+    align-items: flex-start;
+    padding-block: var(--space-1);
+  }
   .navigation-item {
     display: inline-flex;
     width: 100%;
@@ -1498,6 +1676,9 @@
     white-space: nowrap;
   }
 
+  .navigation-item[data-multiline] .navigation-item-label {
+    white-space: normal;
+  }
   .navigation-item-trailing {
     flex: 0 0 auto;
     color: var(--text-metadata);
@@ -1533,6 +1714,9 @@
     padding: var(--space-half) calc(var(--space-1) + var(--space-half))
       var(--space-half) var(--space-2);
     border-radius: var(--radius-row);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-multiline] {
+    height: auto;
   }
   .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-selected] {
     --navigation-item-text: var(--text-row-selected);

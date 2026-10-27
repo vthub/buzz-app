@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -12,6 +19,9 @@ import {
 
 import { fixture, owners, id, viewer, scope } from "./sidebar-testing";
 import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
+import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
+import { PrimarySidebar } from "./PrimarySidebar";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SOLO_LABEL } from "../../features/solo/labels";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 stubAvatarBrowserApis();
@@ -584,4 +594,180 @@ it("keeps new Solo chats available when project creation is unavailable", async 
   ).toHaveAttribute("aria-disabled", "true");
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
   expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
+});
+
+it("changes Team to Solo only for a live explicit chip intent and does not replay it after navigation and remount", async () => {
+  const h = createSoloRegionFixture(viewer);
+  const current = conversationTarget(h.scope, "owned");
+  let target = current;
+  const tree = () => (
+    <ToastProvider>
+      <PrimarySidebar relay={h.relay} navigator={h.navigator} target={target}>
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>
+  );
+  const view = render(tree());
+  try {
+    await act(() => h.navigate(current));
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Team" }));
+    act(() => h.service.reveal("owned"));
+    expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    target = conversationTarget(h.scope, "team");
+    await act(() => h.navigate(target));
+    view.rerender(tree());
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Team" }));
+    act(() => h.roster([...h.session.channels.list().channels]));
+    view.rerender(<div />);
+    view.rerender(tree());
+    expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  } finally {
+    view.unmount();
+    await h.dispose();
+  }
+});
+
+it("uses one contributed heading and the prior All Team Nexus order without losing chat creation", async () => {
+  const h = createSoloRegionFixture(viewer);
+  await h.register({ title: "Nexus", component: () => null });
+  const target = conversationTarget(h.scope, "owned");
+  const view = render(
+    <ToastProvider>
+      <PrimarySidebar relay={h.relay} navigator={h.navigator} target={target}>
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  try {
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "All",
+      "Team",
+      "Nexus",
+    ]);
+    expect(screen.queryByText("Solo")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Nexus")).toHaveLength(2);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "New chat" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "New workspace" }),
+    ).toBeVisible();
+  } finally {
+    view.unmount();
+    await h.dispose();
+  }
+});
+
+it("merged Create keeps workspace creation and return focus when a plugin menu fails", async () => {
+  const h = createSoloRegionFixture(viewer);
+  const create = vi.fn(async (_section: { id: string; name: string }) => {});
+  Object.assign(h.session, {
+    soloPreferences: {
+      ...h.session.soloPreferences,
+      sectionCreationWritable: true,
+      createSection: create,
+    },
+  });
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator = { ...h.navigator, open };
+  await h.register({
+    title: "Nexus",
+    component: () => null,
+    actions: () => [
+      {
+        id: "create",
+        label: "Create",
+        icon: "plus",
+        onSelect() {},
+        menu() {
+          throw new Error("Broken contribution");
+        },
+      },
+    ],
+  });
+  const view = render(
+    <ToastProvider>
+      <PrimarySidebar
+        relay={h.relay}
+        navigator={navigator}
+        target={conversationTarget(h.scope, "owned")}
+      >
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  try {
+    const trigger = screen.getByRole("button", { name: "Create" });
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "New workspace" }),
+    );
+    await screen.findByRole("dialog", { name: "New workspace" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "New workspace" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+      "Planning",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    const project = create.mock.calls[0]?.[0] as unknown as { id: string };
+    await waitFor(() =>
+      expect(open).toHaveBeenCalledWith(
+        soloDraftTarget(h.scope, { project: project.id }),
+      ),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+  } finally {
+    view.unmount();
+    await h.dispose();
+  }
+});
+
+it("collapsing the contributed task section keeps ordinary chats visible", async () => {
+  const h = createSoloRegionFixture(viewer);
+  await h.register({
+    title: "Nexus",
+    component: ({ ui }) => <ui.Destination channelId="owned" />,
+  });
+  const view = render(
+    <ToastProvider>
+      <PrimarySidebar
+        relay={h.relay}
+        navigator={h.navigator}
+        target={conversationTarget(h.scope, "chat")}
+      >
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  try {
+    const heading = view.container.querySelector(
+      "[data-sidebar-section] summary",
+    );
+    expect(heading).not.toBeNull();
+    await userEvent.setup().click(heading as HTMLElement);
+    await waitFor(() =>
+      expect(heading?.closest("details")).not.toHaveAttribute("open"),
+    );
+    expect(screen.getByRole("button", { name: /^Chat$/ })).toBeVisible();
+  } finally {
+    view.unmount();
+    await h.dispose();
+  }
 });

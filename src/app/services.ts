@@ -35,6 +35,7 @@ import { PanelsService } from "../features/panels/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
+import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
 import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
 import { bundledPlugins } from "../bundled";
 import { conversationFeatures } from "./conversation-features";
@@ -87,6 +88,8 @@ export function createServices() {
     apply: communities.applySync,
   });
   const relay = communities.relay;
+  // Expose v2 only with the complete label/projection/frame/Destination/guard slice.
+  new SoloNavigationService(ctx, relay, plugins);
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());

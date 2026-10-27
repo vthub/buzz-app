@@ -1,9 +1,11 @@
+import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import {
   useEffect,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
@@ -95,6 +97,26 @@ function ScopedSidebar({
         typeof saved?.location === "string" ? saved.location : undefined,
     };
   });
+  useEffect(
+    () =>
+      soloNavigationFor(connection.session)?.subscribeReveal(
+        (_id, explicit) =>
+          explicit &&
+          setView((current) =>
+            current.filter === "team"
+              ? { ...current, filter: "solo" }
+              : current,
+          ),
+      ),
+    [connection.session],
+  );
+  const soloNavigation = soloNavigationFor(connection.session);
+  const soloSnapshot = useSyncExternalStore(
+    soloNavigation?.subscribe ?? noSubscription,
+    () => soloNavigation?.snapshot(),
+  );
+  const soloTitle =
+    soloSnapshot?.regions.find((region) => region.source)?.title ?? "Solo";
   const target = props.target;
   const local =
     "scope" in target &&
@@ -151,7 +173,11 @@ function ScopedSidebar({
             label="Navigation scope"
             variant="segmented"
             value={filter}
-            items={filters}
+            items={
+              soloTitle === "Solo"
+                ? filters
+                : [filters[0], filters[2], { ...filters[1], label: soloTitle }]
+            }
             onValueChange={setFilter}
           />
         </div>
@@ -211,7 +237,7 @@ function ScopedSidebar({
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
                   <section
-                    aria-label="Solo"
+                    aria-label={soloTitle}
                     className={styles.sidebarGroup}
                     hidden={filter === "team"}
                   >
@@ -223,6 +249,30 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
+                      renderContents={(
+                        ordinary,
+                        ordinaryActions,
+                        header,
+                        creationTrigger,
+                      ) => (
+                        <SoloRegions
+                          key={`regions:${scope}:${connection.generation}`}
+                          session={connection.session}
+                          scope={scope}
+                          navigator={props.navigator}
+                          target={props.target}
+                          sidebar={sidebar}
+                          ordinary={ordinary}
+                          ordinaryActions={ordinaryActions}
+                          creationTrigger={creationTrigger}
+                          fallback={
+                            <>
+                              {header}
+                              {ordinary}
+                            </>
+                          }
+                        />
+                      )}
                     />
                   </section>
                   <div

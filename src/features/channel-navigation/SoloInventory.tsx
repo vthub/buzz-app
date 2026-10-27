@@ -1,3 +1,4 @@
+import { useSoloNavigation } from "./solo-navigation-react";
 import {
   useEffect,
   useRef,
@@ -5,9 +6,10 @@ import {
   useSyncExternalStore,
   type ComponentProps,
   type RefObject,
+  type ReactNode,
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
-import { ownSolo } from "../solo/labels";
+import { eligibleSolo } from "../solo/labels";
 import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
@@ -60,6 +62,7 @@ export function SoloInventory({
   target,
   chatIcons,
   chatMenus,
+  renderContents,
 }: {
   session: RelaySession;
   scope: string;
@@ -68,8 +71,15 @@ export function SoloInventory({
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  renderContents?: (
+    content: ReactNode,
+    actions: ReactNode,
+    header: ReactNode,
+    trigger: RefObject<HTMLButtonElement | null>,
+  ) => ReactNode;
 }) {
   const list = useChannelList(session.channels);
+  const regions = useSoloNavigation(session);
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -140,9 +150,7 @@ export function SoloInventory({
     // Opening one from a link without membership adds nothing here.
     .filter(
       (item) =>
-        !item.archived &&
-        item.channelType === "solo" &&
-        (!item.readOnly || ownSolo(item, session.viewer)),
+        eligibleSolo(item, session.viewer) && !regions.excluded.has(item.id),
     )
     .sort(
       (a, b) =>
@@ -165,44 +173,54 @@ export function SoloInventory({
     if (project) resetNewChatProject(scope, project);
     void navigator.open(soloDraftTarget(scope, project ? { project } : {}));
   };
-  return (
-    <nav className={styles.sidebarContents} aria-label="Solo conversations">
-      <div
-        className={creationStyles.header}
-        data-actions-visible={menuOpen || undefined}
+  const creationItems = (
+    <>
+      <MenuItem onClick={() => newChat()}>New chat</MenuItem>
+      <MenuItem
+        disabled={!session.soloPreferences.sectionCreationWritable}
+        onClick={() => {
+          if (current()) setCreatingProject(true);
+        }}
       >
-        <InlineHeader
-          title={<span className="text-standard">Solo</span>}
-          actions={
-            <div className={creationStyles.actions}>
-              <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
-                <MenuTrigger
-                  render={
-                    <IconButton
-                      ref={trigger}
-                      size="compact"
-                      aria-label="New chat or workspace"
-                      title="New chat or workspace"
-                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                    />
-                  }
-                />
-                <MenuPopup align="end">
-                  <MenuItem onClick={() => newChat()}>New chat</MenuItem>
-                  <MenuItem
-                    disabled={!session.soloPreferences.sectionCreationWritable}
-                    onClick={() => {
-                      if (current()) setCreatingProject(true);
-                    }}
-                  >
-                    New workspace
-                  </MenuItem>
-                </MenuPopup>
-              </MenuRoot>
-            </div>
+        New workspace
+      </MenuItem>
+    </>
+  );
+  const actions = (
+    <div className={creationStyles.actions}>
+      <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+        <MenuTrigger
+          render={
+            <IconButton
+              ref={trigger}
+              size="compact"
+              aria-label="New chat or workspace"
+              title="New chat or workspace"
+              icon={<PlusIcon size={15} strokeWidth={2.5} />}
+            />
           }
         />
-      </div>
+        <MenuPopup align="end">{creationItems}</MenuPopup>
+      </MenuRoot>
+    </div>
+  );
+  const header = (
+    <div
+      className={creationStyles.header}
+      data-actions-visible={menuOpen || undefined}
+    >
+      <InlineHeader
+        title={
+          <span className="text-standard" data-solo-heading="" tabIndex={-1}>
+            Solo
+          </span>
+        }
+        actions={actions}
+      />
+    </div>
+  );
+  const content = (
+    <>
       {empty && (
         <NavigationItem
           variant="row"
@@ -304,6 +322,21 @@ export function SoloInventory({
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
       {list.status === "error" && !recoveryShown && (
         <p role="alert">{list.error}</p>
+      )}
+    </>
+  );
+  return (
+    <nav
+      className={styles.sidebarContents}
+      aria-label={`${regions.regions.find((region) => region.source)?.title ?? "Solo"} conversations`}
+    >
+      {renderContents ? (
+        renderContents(content, creationItems, header, trigger)
+      ) : (
+        <>
+          {header}
+          {content}
+        </>
       )}
     </nav>
   );

@@ -830,7 +830,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "affordance-sidebar-hover",
         variable: "--affordance-sidebar-hover",
         pointsAt: "accent 2 light / accent 3 dark",
-        use: "Sidebar row hover, quieter than selection.",
+        use: "Sidebar row hover and Solo card drop destinations, quieter than selection.",
         status: "core",
       },
       {
