@@ -10,6 +10,7 @@ import { useCompletionPosition } from "./useCompletionPosition";
 import {
   useId,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -33,6 +34,35 @@ import type { CompletionEditor } from "./useCompletionEditor";
 import styles from "./Completions.module.css";
 
 const RETRY = Symbol("retry-completion");
+
+/** What the popup shows, owned by the host across the per-query remount of
+ * `OwnedCompletion`. A keystroke that continues an open query (same provider,
+ * same trigger) mounts a new owner; its first commit used to close the popup
+ * until the provider's mount effect published, a paint later. The new owner
+ * now shows the previous query's result until its own first publication
+ * replaces it in the same task: a store update renders synchronously, and an
+ * owner whose provider has not published by the end of its mount effects
+ * clears it. A query opened elsewhere, or by another provider, starts empty. */
+function createDisplay() {
+  let shown: { key: string; result: CompletionResult | undefined } = {
+    key: "",
+    result: undefined,
+  };
+  const listeners = new Set<() => void>();
+  return {
+    read: (key: string) => (shown.key === key ? shown.result : undefined),
+    set(key: string, result: CompletionResult | undefined) {
+      shown = { key, result };
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
 
 // Channel links belong in prose, not inside existing links or code.
 // Run only after a channel trigger matches; ordinary typing does no extra parsing.
@@ -106,6 +136,7 @@ export function ComposerCompletions({
     registry.snapshot,
     registry.snapshot,
   );
+  const [display] = useState(createDisplay);
   const observation = editor.observation;
   // Stale chip ranges cannot classify this caret.
   const match =
@@ -139,6 +170,7 @@ export function ComposerCompletions({
       <OwnedCompletion
         {...context}
         registry={registry}
+        display={display}
         provider={match.provider}
         query={match.query}
         observation={observation}
@@ -152,6 +184,7 @@ export function ComposerCompletions({
 function OwnedCompletion({
   provider,
   registry,
+  display,
   query,
   observation,
   editor,
@@ -161,6 +194,7 @@ function OwnedCompletion({
 }: CompletionContext & {
   provider: Contribution<ComposerCompletion>;
   registry: ContributionReader<ComposerCompletion>;
+  display: ReturnType<typeof createDisplay>;
   query: CompletionQuery;
   observation: ComposerObservation;
   editor: CompletionEditor;
@@ -188,7 +222,13 @@ function OwnedCompletion({
       : undefined,
   );
   const list = useRef<HTMLDivElement>(null);
-  const [result, setResult] = useState<CompletionResult>();
+  const trigger = `${contributionKey(provider)}:${query.start}`;
+  const result = useSyncExternalStore(
+    display.subscribe,
+    () => display.read(trigger),
+    () => display.read(trigger),
+  );
+  // This lifetime's own publication; a carried display is never acted on.
   const latest = useRef<CompletionResult | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
@@ -214,7 +254,7 @@ function OwnedCompletion({
       const next = completionResult(incoming);
       latest.current = next;
       revealSelection.current = true;
-      setResult(next);
+      display.set(trigger, next);
       setSelected((previous) =>
         next.items.some((item) => item.id === previous)
           ? previous
@@ -225,7 +265,7 @@ function OwnedCompletion({
       return () => {
         if (latest.current !== next) return;
         latest.current = undefined;
-        if (live.current) setResult(undefined);
+        if (live.current) display.set(trigger, undefined);
       };
     });
     return () => {
@@ -233,7 +273,14 @@ function OwnedCompletion({
       live.current = false;
       latest.current = undefined;
     };
-  }, [active]);
+  }, [active, display, trigger]);
+  // A carried result stands only until this query's provider has run its
+  // mount effects, which precede this one; a provider that has not published
+  // by then leaves the popup closed, as for a first query, so a stale display
+  // is never painted.
+  useEffect(() => {
+    if (publish && !latest.current) display.set(trigger, undefined);
+  }, [publish, display, trigger]);
   const items = result?.items ?? [];
   // Matching syntax is not evidence of pending work. Providers publish their
   // own status when needed; an empty/unpublished result must not flash a portal.

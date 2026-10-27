@@ -30,7 +30,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
@@ -946,6 +946,137 @@ it("selects the exact match on Space from a publication React has not rendered y
   });
   expect(input).toHaveValue("chosen ");
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+/** The real `@` syntax with a provider that answers each query from its mount
+ * effect, as the bundled providers do: one row named by the query, the exact
+ * name decided on Space, and a settled empty result once a Space is typed. */
+function mountTypeahead() {
+  function Completion({ query, publish }: ComposerCompletionProps) {
+    useEffect(() => {
+      const withdraw = publish(
+        query.query.includes(" ")
+          ? { items: [] }
+          : {
+              items: [
+                {
+                  id: first.pubkey,
+                  label: `Honey ${query.query}`,
+                  edit: { mention: first },
+                },
+              ],
+              ...(query.query === "honey" ? { spaceId: first.pubkey } : {}),
+            },
+      );
+      return () => {
+        if (withdraw) withdraw();
+      };
+    }, [query.query, publish]);
+    return null;
+  }
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: Completion,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+  return {
+    ...h,
+    /** The popup's row labels, or null while the popup is not in the document. */
+    rows() {
+      const popup = document.querySelector(
+        'section[aria-label="Mention suggestions"]',
+      );
+      return popup
+        ? [...popup.querySelectorAll('[role="option"]')].map(
+            (row) => row.textContent,
+          )
+        : null;
+    },
+  };
+}
+
+it("keeps the popup up through each keystroke that continues an open @ query", async () => {
+  const h = mountTypeahead();
+  const input = h.input();
+  input.focus();
+  h.fill("@h");
+  expect(h.rows()).toEqual(["Honey h"]);
+  const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
+  const previous = env.IS_REACT_ACT_ENVIRONMENT;
+  // Each delivery of DOM changes is a point at which the browser may paint.
+  const deliveries: (string[] | null)[] = [];
+  const observer = new MutationObserver(() => deliveries.push(h.rows()));
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+  try {
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    for (const text of ["@ho", "@hon", "@hone", "@honey"]) {
+      // The draft changes during a discrete event, as under a keystroke, so
+      // React commits the new observation in a microtask rather than under
+      // act; the provider's rows for it must be in the document by the end
+      // of that task, with no delivery in between showing no popup.
+      input.addEventListener(
+        "select",
+        () => {
+          input.value = text;
+          input.setSelectionRange(text.length, text.length);
+        },
+        { once: true },
+      );
+      input.dispatchEvent(new Event("select"));
+      await Promise.resolve();
+      expect(h.rows()).toEqual([`Honey ${text.slice(1)}`]);
+      // The observer's own microtask was queued during React's.
+      await Promise.resolve();
+    }
+  } finally {
+    env.IS_REACT_ACT_ENVIRONMENT = previous;
+    observer.disconnect();
+    await act(async () => {});
+  }
+  expect(deliveries.length).toBeGreaterThanOrEqual(4);
+  expect(deliveries).not.toContain(null);
+  expect(deliveries.at(-1)).toEqual(["Honey honey"]);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("still closes the popup when the query closes, on Escape, and on a Space that selects", () => {
+  const h = mountTypeahead();
+  const input = h.input();
+  input.focus();
+  h.fill("@hon");
+  expect(h.rows()).toEqual(["Honey hon"]);
+  // A settled empty result for the continued query: `@hon ` is prose.
+  h.fill("@hon ");
+  expect(h.rows()).toBeNull();
+  h.fill("@hone");
+  expect(h.rows()).toEqual(["Honey hone"]);
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(h.rows()).toBeNull();
+  h.fill("@honey");
+  expect(h.rows()).toEqual(["Honey honey"]);
+  expect(fireEvent.keyDown(input, { key: " " })).toBe(false);
+  expect(input).toHaveValue("@Honey ");
+  expect(h.rows()).toBeNull();
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
