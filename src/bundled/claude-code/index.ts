@@ -19,7 +19,7 @@ export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 
-export const inject = ["agents", "host"];
+export const inject = ["agents", "host", "agentProtection"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
@@ -29,6 +29,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = host.spawn && withScript(host.spawn.bind(host));
   const readFile = host.readFile?.bind(host);
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
+  ctx.agentProtection.registerModels({
+    label: "Claude",
+    models: async () =>
+      setup.snapshot().models.map((model) => ({
+        id: model.value,
+        label: model.displayName ?? model.value,
+      })),
+    complete: (model, prompt, signal) => setup.review(model, prompt, signal),
+  });
   const providerDefaults = new ClaudeDefaults(agents.storage);
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
@@ -62,9 +71,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // Agents that stop running, the app signing out included, stop their
     // processes; switching communities does not.
     if (snapshot.status === "loading") return;
-    const running = snapshot.running.filter(
-      (agent) => agent.type === typeKey && !agent.protection,
-    );
+    const running = snapshot.running.filter((agent) => agent.type === typeKey);
     runtime.sync(running);
     // Once loaded, and when the first Claude agent runs, the copy is brought
     // up to date; that is also when a first copy is downloaded.
@@ -106,8 +113,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: TYPE_ID,
     hooks: { events: CLAUDE_HOOK_EVENTS },
     retire: (pubkey) => runtime.retire(pubkey),
-    protectionUnavailable:
-      "Claude cannot withhold every native tool result for review. Protected execution is unavailable.",
+    protection: true,
     title: "Claude",
     icon: ClaudeLogoIcon,
     description:
@@ -216,6 +222,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     // A mention during the first download waits for it, within its deadline.
-    ...claudeRun(runtime, (signal) => setup.installed(signal)),
+    ...claudeRun(runtime, (signal, agent) =>
+      agent?.protection
+        ? setup.protectedInstalled(signal)
+        : setup.installed(signal),
+    ),
   });
 };

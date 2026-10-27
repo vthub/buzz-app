@@ -26,6 +26,7 @@ const SAVED_LIMIT = 200;
 
 /** What is saved for one conversation. */
 export type SavedSession = Readonly<{
+  protection?: string;
   id: string;
   /** created_at of the newest event this session has been shown. */
   seen: number;
@@ -111,6 +112,11 @@ export class AgentSessions {
     const saved = this.options.store.get(key);
     return (contextRoot ? saved?.threads?.[contextRoot] : saved?.seen) ?? 0;
   }
+  protectionContext(key: string) {
+    const live = this.live.get(key) ?? this.once.get(key);
+    if (!live) throw new Error("The protected Claude session is unavailable");
+    return live.process.protectionContext();
+  }
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.process.active;
   }
@@ -166,6 +172,9 @@ export class AgentSessions {
           throw new Error("Claude was stopped");
         const process = await ClaudeProcess.start(this.options.spawn, {
           cwd: launch.cwd,
+          ...(launch.protection
+            ? { protection: launch.protection, discovery: true }
+            : {}),
           ...(launch.model ? { model: launch.model } : {}),
           ...(launch.effort ? { effort: launch.effort } : {}),
           systemPrompt: "",
@@ -490,7 +499,8 @@ export class AgentSessions {
     launch: Omit<ClaudeLaunch, "resume" | "sessionId">,
     spawned?: (process: ClaudeProcess) => void,
   ) {
-    const spare = await this.options.spare?.take(launch);
+    const spare =
+      !launch.protection && (await this.options.spare?.take(launch));
     if (spare)
       try {
         spawned?.(spare);

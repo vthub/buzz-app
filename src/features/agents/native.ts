@@ -297,7 +297,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_remember", { pubkey, relay, slug, body, after }),
         publishProfile: ({ pubkey, relay }) =>
           invoke("app_agent_publish_profile", { pubkey, relay }),
-        claim: (pubkey, revision) => invoke("app_agent_claim", { pubkey, revision: revision ?? 0 }),
+        claim: (pubkey, revision) =>
+          invoke("app_agent_claim", { pubkey, revision: revision ?? 0 }),
         release: (pubkey) => invoke("app_agent_release", { pubkey }),
         keepAwake: (hold) => invoke("keep_awake_set", { hold }),
       }

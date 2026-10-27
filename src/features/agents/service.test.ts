@@ -3306,7 +3306,7 @@ describe("an agent in several communities", () => {
   it("keeps the agent held while another community's claim is still being answered", async () => {
     const { service, native, run, select, second, connect } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     // Its runner in the community it joins claims it, unanswered for now.
     let answer = (_: boolean) => {};
     native.claim.mockImplementationOnce(
@@ -3329,6 +3329,58 @@ describe("an agent in several communities", () => {
     expect(run.mock.calls[0]?.[0].agent.key).toBe(away);
     await settle();
     expect(native.release).not.toHaveBeenCalled();
+  });
+
+  it("retires disconnected memberships before changing global protection", async () => {
+    const retire = vi.fn(async (_key: string) => {});
+    const { service, native, plugin, second, select } = await joined({
+      retire,
+      protection: true,
+    });
+    select("https://relay.example.test");
+    second.connect(false);
+    await vi.waitFor(() =>
+      expect(service.snapshot().running.map((agent) => agent.key)).toEqual([
+        bot,
+      ]),
+    );
+    const setProtection = vi.fn(async () => {});
+    Object.assign(native, { setProtection });
+    await plugin.agentProtection.saveAgent(bot, 0, {});
+    expect(retire.mock.calls.map(([key]) => key).sort()).toEqual(
+      [bot, away].sort(),
+    );
+    expect(setProtection).toHaveBeenCalledOnce();
+  });
+
+  it("holds a membership joined during a global protection save", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const retire = vi.fn(() => held);
+    const f = await setup({ retire, protection: true });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    const setProtection = vi.fn(async () => {});
+    Object.assign(f.native, { setProtection });
+    const saving = f.plugin.agentProtection.saveAgent(bot, 0, {});
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledWith(bot));
+    try {
+      f.select(f.second.origin);
+      await vi.waitFor(() =>
+        expect(f.service.joinable().map((agent) => agent.key)).toEqual([bot]),
+      );
+      await f.service.join(bot);
+      expect(f.plugin.agents.handle(away)).toBeUndefined();
+      f.second.emit({ events: [mention("joined-during-save")] });
+      await settle();
+      expect(f.run).not.toHaveBeenCalled();
+      expect(setProtection).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await saving;
+    }
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
   });
 
   it("changes its type only while no community is running a turn", async () => {
@@ -9702,6 +9754,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
   if (!handle) throw new Error("Missing handle");
   const client = appClient(handle, {
     read: vi.fn(),
+    protectionContext: async () => ({ messages: [] }),
     memories: async () => ({ entries: [], partial: false }),
   });
   select(second.origin);
@@ -9855,6 +9908,7 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
   if (!handle) throw new Error("Missing handle");
   const client = appClient(handle, {
     read: vi.fn(),
+    protectionContext: async () => ({ messages: [] }),
     memories: async () => ({ entries: [], partial: false }),
   });
   const result = JSON.parse(
@@ -11859,6 +11913,7 @@ it("revoking the runner while a protected shared tool waits cancels it before an
   if (!handle) throw new Error("Expected active handle");
   const client = appClient(handle, {
     read: vi.fn(),
+    protectionContext: async () => ({ messages: [] }),
     memories: async () => ({ entries: [], partial: false }),
   });
   const call = vi.fn(async () => "done");

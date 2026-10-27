@@ -3,6 +3,7 @@
 // go both ways: the plugin asks the host to run turns, and the host asks the
 // plugin to run the Buzz tools, so the process holds no Buzz key.
 import type { AgentProtection } from "../../features/agent-protection/service";
+import { protectionEnvironment } from "../../features/agent-protection/native-bridge";
 import type { Context } from "../../buzz-mcp/client";
 import type {
   HostProcess,
@@ -299,6 +300,7 @@ export class Pi {
       ...(runtime && protectedLaunch
         ? {
             env: {
+              ...protectionEnvironment(protectedLaunch.gate),
               BASH_ENV: null,
               ENV: null,
               NODE_OPTIONS: null,

@@ -3,6 +3,12 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, RegisteredAgentType } from "../agents/service";
 import type { ProcessProtection } from "../host/service";
+import {
+  reviewPrompt,
+  reviewAssessment,
+  type ReviewModel,
+  type ReviewModelProvider,
+} from "./models";
 
 export type ProtectionBinding = Readonly<{ provider: string; policy: unknown }>;
 export type ProtectionAction = Readonly<{
@@ -11,6 +17,14 @@ export type ProtectionAction = Readonly<{
   content: unknown;
   command?: string;
 }>;
+export type ProtectionPhases = Readonly<
+  Record<ProtectionAction["kind"], boolean>
+>;
+export const ALL_PHASES: ProtectionPhases = Object.freeze({
+  context: true,
+  tool: true,
+  "tool-result": true,
+});
 export type ProtectionRequest = ProtectionAction &
   Readonly<{
     agent: Readonly<{ id: string; pubkey: string; name: string }>;
@@ -19,11 +33,13 @@ export type ProtectionRequest = ProtectionAction &
     policy: unknown;
   }>;
 export type ProtectionProvider = Readonly<{
+  phases?(policy: unknown): ProtectionPhases;
   /** Checks one immutable action. Failure, removal and cancellation deny it. */
   check(request: ProtectionRequest, signal: AbortSignal): Promise<boolean>;
   processProtection: ProcessProtection;
 }>;
 export type AgentProtection = Readonly<{
+  phases?: ProtectionPhases;
   /** Changes when the saved policy or registered provider changes. */
   key: string;
   /** Stable native policy revision, for isolated durable runtime state. */
@@ -59,6 +75,7 @@ export class AgentProtectionService extends Service {
     { value: ProtectionProvider; abort: AbortController; epoch: number }
   >();
   private epoch = 0;
+  private modelProviders = new Map<string, ReviewModelProvider>();
   constructor(
     ctx: Context,
     private current: () => {
@@ -102,13 +119,70 @@ export class AgentProtectionService extends Service {
     if (!id) throw new Error("Only an installed plugin configures protection");
     return id;
   }
+  /** Each runtime retains credential and provider ownership. */
+  registerModels(provider: ReviewModelProvider) {
+    const id = this.plugin();
+    this.modelProviders.set(id, provider);
+    return this.ctx.effect(() => () => {
+      if (this.modelProviders.get(id) === provider)
+        this.modelProviders.delete(id);
+    });
+  }
+  async modelChoices() {
+    const rows = await Promise.all(
+      [...this.modelProviders].map(async ([runtime, provider]) => ({
+        runtime,
+        label: provider.label,
+        models: await provider.models().catch(() => []),
+      })),
+    );
+    return rows;
+  }
+  async evaluate(
+    model: ReviewModel,
+    action: ProtectionRequest,
+    signal: AbortSignal,
+  ) {
+    this.plugin();
+    signal.throwIfAborted();
+    if (model.runtime === "agent") {
+      const agent = this.current().agents.find(
+        (agent) =>
+          agent.pubkey === action.agent.pubkey && agent.relay === action.relay,
+      );
+      if (!agent)
+        throw new Error("The requesting agent is no longer available");
+      const config = agent.config as { provider?: string; model?: string };
+      model = {
+        runtime: agent.type.split("/")[0] ?? "",
+        provider: config.provider ?? "",
+        id: config.model ?? "",
+      };
+    }
+    const provider = this.modelProviders.get(model.runtime);
+    if (!provider)
+      throw new Error("The selected review model's runtime is unavailable");
+    const prompt = reviewPrompt(action);
+    if (new TextEncoder().encode(prompt).length > 65536)
+      throw new Error("Security review context is too large");
+    const result = await provider.complete(model, prompt, signal);
+    signal.throwIfAborted();
+    if (this.modelProviders.get(model.runtime) !== provider)
+      throw new Error("The review model's runtime changed");
+    return reviewAssessment(result.text, {
+      ...result.model,
+      runtime: model.runtime,
+    });
+  }
   async snapshot() {
     const { owner, agents, types } = this.current();
     const saved = owner ? await this.native.read(owner) : blank();
     return copy({
       revision: saved.revision,
       defaults: saved.defaults,
-      agents: agents
+      agents: [
+        ...new Map(agents.map((agent) => [agent.pubkey, agent])).values(),
+      ]
         .filter((a) => a.place === "here" && a.owner === owner)
         .map((a) => ({
           id: a.pubkey,
@@ -170,6 +244,7 @@ export class AgentProtectionService extends Service {
     agent: Pick<
       Agent,
       | "pubkey"
+      | "key"
       | "owner"
       | "name"
       | "type"
@@ -181,7 +256,16 @@ export class AgentProtectionService extends Service {
     if (!agent.protection) return;
     const binding = copy(agent.protection);
     const provider = this.providers.get(binding.provider);
-    const key = `${agent.pubkey}:${binding.provider}:${agent.protectionRevision ?? 0}:${provider?.epoch ?? "missing"}`;
+    const phases = copy(
+      provider?.value.phases?.(copy(binding.policy)) ?? ALL_PHASES,
+    );
+    if (
+      Object.keys(phases).sort().join(",") !== "context,tool,tool-result" ||
+      Object.values(phases).some((value) => typeof value !== "boolean")
+    )
+      throw new Error("Invalid protection phases");
+    const membership = agent.key ?? agent.pubkey;
+    const key = `${membership}:${binding.provider}:${agent.protectionRevision ?? 0}:${provider?.epoch ?? "missing"}`;
     const assertAvailable = () => {
       if (
         !provider ||
@@ -192,7 +276,8 @@ export class AgentProtectionService extends Service {
     };
     return Object.freeze({
       key,
-      stateKey: `${agent.pubkey}:${binding.provider}:${agent.protectionRevision ?? 0}`,
+      phases: Object.freeze(phases),
+      stateKey: `${membership}:${binding.provider}:${agent.protectionRevision ?? 0}`,
       assertAvailable,
       processProtection: copy(
         provider?.value.processProtection ?? {
@@ -203,6 +288,7 @@ export class AgentProtectionService extends Service {
       check: async (action: ProtectionAction, stopped: AbortSignal) => {
         stopped.throwIfAborted();
         assertAvailable();
+        if (phases[action.kind] === false) return;
         if (!provider)
           throw new Error("The required protection plugin is unavailable");
         const signal = AbortSignal.any([

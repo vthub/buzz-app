@@ -1,0 +1,444 @@
+--- a/crates/goose/src/acp/server/custom_dispatch.rs
++++ b/crates/goose/src/acp/server/custom_dispatch.rs
+@@ -9,6 +9,10 @@
+         method: &str,
+         params: serde_json::Value,
+     ) -> Result<serde_json::Value, agent_client_protocol::Error> {
++        if method == "_buzz/security/review" {
++            return crate::buzz_security::review(params).await.map_err(|e|agent_client_protocol::Error::internal_error().data(e.to_string()));
++        }
++        if method == "_buzz/security/capabilities" { return Ok(serde_json::json!({"version":2})); }
+         let result = async {
+             if <SaveRecipeRequest as agent_client_protocol::JsonRpcMessage>::matches_method(method)
+             {
+--- a/crates/goose/src/agents/agent.rs
++++ b/crates/goose/src/agents/agent.rs
+@@ -655,6 +655,7 @@
+             });
+ 
+         let auto_effort = (|| {
++            if crate::buzz_security::enabled() { return None; }
+             let config = Config::global();
+             if !config
+                 .get_param::<bool>("GOOSE_AUTO_EFFORT_ENABLED")
+--- a/crates/goose/src/agents/extension_manager/mod.rs
++++ b/crates/goose/src/agents/extension_manager/mod.rs
+@@ -787,6 +787,11 @@
+         session_id: &str,
+     ) -> ExtensionResult<Option<Extension>> {
+         let resolved_config = config.clone().resolve(Config::global()).await?;
++        if crate::buzz_security::enabled() && !matches!(&resolved_config,
++            ExtensionConfig::Platform {name,..} | ExtensionConfig::Builtin {name,..} if name == "developer")
++            && !matches!(&resolved_config,ExtensionConfig::StreamableHttp {..}) {
++            return Err(ExtensionError::ConfigError("Protected Goose allows the developer extension and HTTP MCP tools only".into()));
++        }
+         let client_working_dir = match &resolved_config {
+             ExtensionConfig::Stdio { cwd: Some(cwd), .. } => PathBuf::from(cwd),
+             _ => placement
+--- a/crates/goose/src/agents/provider_manager.rs
++++ b/crates/goose/src/agents/provider_manager.rs
+@@ -22,6 +22,13 @@
+ 
+ impl ProviderManager {
+     pub async fn provider_for(&self, session: &Session) -> Result<Arc<dyn Provider>> {
++        crate::buzz_security::wrap(self.unprotected_provider_for(session).await?, &session.id).await
++    }
++
++    async fn unprotected_provider_for(&self, session: &Session) -> Result<Arc<dyn Provider>> {
++        if crate::buzz_security::enabled() && model_config_for(session)?.toolshim {
++            return Err(anyhow!("Protected Goose does not support toolshim inference"));
++        }
+         let name = provider_name_for(session)?;
+         let slot = self.slot(&session.id);
+         let mut slot = slot.lock().await;
+--- a/crates/goose/src/agents/state_machine/ops_recipe.rs
++++ b/crates/goose/src/agents/state_machine/ops_recipe.rs
+@@ -318,6 +318,7 @@
+                 &request.id,
+                 &tool_call.name,
+                 tool_input.as_ref(),
++                        conversation,
+             )
+             .instrument(span.clone())
+             .await;
+--- a/crates/goose/src/agents/state_machine/ops_remaining_tool_calls.rs
++++ b/crates/goose/src/agents/state_machine/ops_remaining_tool_calls.rs
+@@ -164,6 +164,7 @@
+                                 &request.id,
+                                 &tool_call.name,
+                                 tool_input.as_ref(),
++                        conversation,
+                             )
+                             .instrument(span.clone())
+                             .await
+--- a/crates/goose/src/agents/state_machine/ops_retry.rs
++++ b/crates/goose/src/agents/state_machine/ops_retry.rs
+@@ -224,6 +224,7 @@
+             return not_applicable();
+         };
+ 
++        if crate::buzz_security::enabled() { anyhow::bail!("Protected Goose does not execute recipe retry shell actions"); }
+         let retry_timeout = retry_config
+             .timeout_seconds
+             .map(Duration::from_secs)
+--- a/crates/goose/src/agents/state_machine/ops_skills.rs
++++ b/crates/goose/src/agents/state_machine/ops_skills.rs
+@@ -376,6 +376,7 @@
+                         &request.id,
+                         &tool_call.name,
+                         tool_input.as_ref(),
++                        conversation,
+                     )
+                     .instrument(span.clone())
+                     .await
+--- a/crates/goose/src/agents/state_machine/ops_toolcalling.rs
++++ b/crates/goose/src/agents/state_machine/ops_toolcalling.rs
+@@ -122,7 +122,10 @@
+     tool_call_id: &str,
+     tool_name: &str,
+     tool_input: Option<&serde_json::Value>,
++    conversation: &Conversation,
+ ) -> std::result::Result<(), ErrorData> {
++    crate::buzz_security::check("tool", &session.id, serde_json::json!({"title":tool_name,"arguments":tool_input,"callId":tool_call_id,"conversation":conversation.messages()})).await
++        .map_err(|e|ErrorData::new(rmcp::model::ErrorCode::INTERNAL_ERROR,e.to_string(),None))?;
+     let outcome = if hook_manager.has_hooks(HookEvent::PreToolUse) {
+         let context = HookContext::new(HookEvent::PreToolUse, &session.id)
+             .with_tool(tool_name.to_string(), tool_input.cloned())
+@@ -401,6 +404,7 @@
+         request: &ToolRequest,
+         cancellation_token: CancellationToken,
+         session: &Session,
++        conversation: &Conversation,
+     ) -> std::result::Result<ToolCallResult, ErrorData> {
+         let request_id = request.id.clone();
+         let span = tool_span(&tool_call.name, &request_id, &session.id);
+@@ -426,6 +430,7 @@
+                 request_id.as_str(),
+                 &tool_call.name,
+                 tool_input.as_ref(),
++                conversation,
+             )
+             .await?;
+ 
+@@ -1023,6 +1028,7 @@
+                     request,
+                     emit.cancel_token().clone(),
+                     session,
++                    conversation,
+                 )
+                 .await;
+             let result = result.unwrap_or_else(|error_data| ToolCallResult::from(Err(error_data)));
+--- a/crates/goose/src/hooks/mod.rs
++++ b/crates/goose/src/hooks/mod.rs
+@@ -421,6 +421,7 @@
+ impl HookManager {
+     /// Build a manager by scanning all enabled plugins for `hooks/hooks.json`.
+     pub fn load(project_root: Option<&Path>) -> Self {
++        if crate::buzz_security::enabled() { return Self::from_plugins(Vec::new()); }
+         let plugins = discover_enabled_plugins(project_root);
+         Self::from_plugins(plugins)
+     }
+--- a/crates/goose/src/lib.rs
++++ b/crates/goose/src/lib.rs
+@@ -4,6 +4,7 @@
+ compile_error!("Features `rustls-tls` and `native-tls` are mutually exclusive");
+ 
+ pub mod acp;
++pub(crate) mod buzz_security;
+ pub use goose_sdk_types::{custom_notifications, custom_requests};
+ pub mod action_required_manager;
+ pub mod agents;
+--- /dev/null
++++ b/crates/goose/src/buzz_security.rs
+@@ -0,0 +1,291 @@
++//! Mandatory Buzz admission, enabled only by the native protected launcher.
++//! It sits below optional Goose hooks and never interprets a model as authority.
++use crate::config::GooseMode;
++use crate::conversation::message::Message;
++use crate::providers::base::*;
++use anyhow::{Result, anyhow, bail};
++use async_trait::async_trait;
++use goose_providers::{
++    errors::ProviderError, model::ModelConfig, permission::PermissionConfirmation,
++    retry::RetryConfig, thinking::ThinkingEffortSupport,
++};
++use rmcp::model::Tool;
++use serde_json::{Value, json};
++use std::sync::Arc;
++use std::time::Duration;
++use tokio::sync::watch;
++
++pub fn enabled() -> bool {
++    std::env::var_os("BUZZ_SECURITY_URL").is_some()
++}
++
++struct Bridge {
++    client: reqwest::Client,
++    url: String,
++    token: String,
++    session: String,
++}
++static BRIDGE: tokio::sync::OnceCell<Bridge> = tokio::sync::OnceCell::const_new();
++async fn bridge() -> Result<&'static Bridge> {
++    BRIDGE.get_or_try_init(||async {
++        let url=std::env::var("BUZZ_SECURITY_URL")?;
++        let parsed=reqwest::Url::parse(&url)?;
++        if parsed.scheme()!="http" || parsed.host_str()!=Some("127.0.0.1") {bail!("Invalid security bridge");}
++        let token=std::env::var("BUZZ_SECURITY_TOKEN")?;
++        let client=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(310)).build()?;
++        let id=uuid::Uuid::new_v4().to_string();
++        let response=client.post(&url).bearer_auth(&token).json(&json!({"jsonrpc":"2.0","id":id,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"buzz-security","version":"2"}}})).send().await?.error_for_status()?;
++        let session=response.headers().get("mcp-session-id").ok_or_else(||anyhow!("Security bridge did not establish a session"))?.to_str()?.to_string();
++        let reply:Value=serde_json::from_slice(&limited(response).await?)?;
++        if reply.get("id")!=Some(&json!(id)) || reply.get("result").and_then(|r|r.get("serverInfo")).and_then(|r|r.get("version"))!=Some(&json!("2")) {bail!("Invalid security bridge initialization");}
++        Ok(Bridge{client,url,token,session})
++    }).await
++}
++async fn limited(mut response: reqwest::Response) -> Result<Vec<u8>> {
++    let mut bytes = Vec::new();
++    while let Some(chunk) = response.chunk().await? {
++        if bytes.len() + chunk.len() > 4096 {
++            bail!("Invalid security response");
++        }
++        bytes.extend_from_slice(&chunk);
++    }
++    Ok(bytes)
++}
++pub async fn check(kind: &str, session: &str, content: Value) -> Result<()> {
++    let phase = match kind {
++        "context" => "BUZZ_SECURITY_CONTEXT",
++        "tool" => "BUZZ_SECURITY_TOOL",
++        "tool-result" => "BUZZ_SECURITY_TOOL_RESULT",
++        _ => bail!("Unknown security phase"),
++    };
++    if !enabled() {
++        return Ok(());
++    }
++    // Disabled inspection sends no evidence, but still checks the live policy lease.
++    let content = if std::env::var(phase).as_deref() == Ok("0") {
++        Value::Null
++    } else {
++        content
++    };
++    let bridge = bridge().await?;
++    let id = uuid::Uuid::new_v4().to_string();
++    let body = json!({"jsonrpc":"2.0","id":id,"method":"buzz/security/check","params":{"kind":kind,"session":session,"content":content}});
++    if serde_json::to_vec(&body)?.len() > 65536 {
++        bail!("Security review context is too large");
++    }
++    let response = bridge
++        .client
++        .post(&bridge.url)
++        .bearer_auth(&bridge.token)
++        .header("mcp-session-id", &bridge.session)
++        .json(&body)
++        .send()
++        .await?
++        .error_for_status()?;
++    let reply: Value = serde_json::from_slice(&limited(response).await?)?;
++    if reply.get("id") != Some(&Value::String(id))
++        || reply.get("error").is_some()
++        || reply.get("result") != Some(&json!({"allowed":true}))
++    {
++        bail!("Buzz denied this security review");
++    }
++    Ok(())
++}
++
++pub async fn wrap(inner: Arc<dyn Provider>, session: &str) -> Result<Arc<dyn Provider>> {
++    if !enabled() {
++        return Ok(inner);
++    }
++    let entry = crate::providers::get_from_registry(inner.get_name()).await?;
++    if entry.runs_own_tool_loop() || inner.manages_own_context() {
++        bail!("This Goose provider runs tools outside the protected dispatcher");
++    }
++    Ok(Arc::new(ProtectedProvider {
++        inner,
++        session: session.to_string(),
++    }))
++}
++struct ProtectedProvider {
++    inner: Arc<dyn Provider>,
++    session: String,
++}
++#[async_trait]
++impl Provider for ProtectedProvider {
++    fn get_name(&self) -> &str {
++        self.inner.get_name()
++    }
++    fn provider_session_id(&self) -> Option<String> {
++        self.inner.provider_session_id()
++    }
++    async fn resume(&self, _session_id: &str) -> Result<(), ProviderError> {
++        self.inner.resume(_session_id).await
++    }
++    async fn stream(
++        &self,
++        model_config: &ModelConfig,
++        system: &str,
++        messages: &[Message],
++        tools: &[Tool],
++    ) -> Result<MessageStream, ProviderError> {
++        check("context", &self.session, serde_json::json!({"system":system,"messages":messages,"model":model_config,"tools":tools})).await.map_err(|e| goose_providers::errors::ProviderError::ExecutionError(e.to_string()))?;
++        self.inner
++            .stream(model_config, system, messages, tools)
++            .await
++    }
++    async fn complete(
++        &self,
++        model_config: &ModelConfig,
++        system: &str,
++        messages: &[Message],
++        tools: &[Tool],
++    ) -> Result<(Message, ProviderUsage), ProviderError> {
++        check("context", &self.session, serde_json::json!({"system":system,"messages":messages,"model":model_config,"tools":tools})).await.map_err(|e| goose_providers::errors::ProviderError::ExecutionError(e.to_string()))?;
++        self.inner
++            .complete(model_config, system, messages, tools)
++            .await
++    }
++    async fn get_context_limit(&self, model: &str, override_limit: Option<usize>) -> usize {
++        self.inner.get_context_limit(model, override_limit).await
++    }
++    fn retry_config(&self) -> RetryConfig {
++        self.inner.retry_config()
++    }
++    async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
++        self.inner.fetch_supported_models().await
++    }
++    async fn fetch_supported_model_info(&self) -> Result<Vec<ModelInfo>, ProviderError> {
++        self.inner.fetch_supported_model_info().await
++    }
++    async fn fetch_model_info(&self, model_name: &str) -> Result<ModelInfo, ProviderError> {
++        self.inner.fetch_model_info(model_name).await
++    }
++    fn skip_canonical_filtering(&self) -> bool {
++        self.inner.skip_canonical_filtering()
++    }
++    async fn fetch_recommended_models(&self, toolshim: bool) -> Result<Vec<String>, ProviderError> {
++        self.inner.fetch_recommended_models(toolshim).await
++    }
++    async fn fetch_recommended_model_info(
++        &self,
++        toolshim: bool,
++    ) -> Result<Vec<ModelInfo>, ProviderError> {
++        self.inner.fetch_recommended_model_info(toolshim).await
++    }
++    async fn map_to_canonical_model(
++        &self,
++        provider_model: &str,
++    ) -> Result<Option<String>, ProviderError> {
++        self.inner.map_to_canonical_model(provider_model).await
++    }
++    fn manages_own_context(&self) -> bool {
++        self.inner.manages_own_context()
++    }
++    fn uses_local_session_naming(&self) -> bool {
++        self.inner.uses_local_session_naming()
++    }
++    fn supports_builtin_tools(&self) -> bool {
++        self.inner.supports_builtin_tools()
++    }
++    async fn configure_oauth(&self) -> Result<(), ProviderError> {
++        self.inner.configure_oauth().await
++    }
++    async fn refresh_credentials(&self) -> Result<(), ProviderError> {
++        self.inner.refresh_credentials().await
++    }
++    async fn update_mode(&self, _session_id: &str, _mode: GooseMode) -> Result<(), ProviderError> {
++        self.inner.update_mode(_session_id, _mode).await
++    }
++    fn thinking_effort_support(&self) -> ThinkingEffortSupport {
++        self.inner.thinking_effort_support()
++    }
++    fn subscribe_thinking_effort_support(&self) -> Option<watch::Receiver<ThinkingEffortSupport>> {
++        self.inner.subscribe_thinking_effort_support()
++    }
++    async fn set_thinking_effort(
++        &self,
++        _session_id: &str,
++        _value: &str,
++    ) -> Result<bool, ProviderError> {
++        self.inner.set_thinking_effort(_session_id, _value).await
++    }
++    async fn apply_model_selection(
++        &self,
++        _model_config: &ModelConfig,
++    ) -> Result<(), ProviderError> {
++        self.inner.apply_model_selection(_model_config).await
++    }
++    fn permission_routing(&self) -> PermissionRouting {
++        self.inner.permission_routing()
++    }
++    async fn handle_permission_confirmation(
++        &self,
++        _request_id: &str,
++        _confirmation: &PermissionConfirmation,
++    ) -> bool {
++        self.inner
++            .handle_permission_confirmation(_request_id, _confirmation)
++            .await
++    }
++}
++
++/// A short-lived setup worker; no agent/session/extensions or tools are created.
++pub async fn review(params: Value) -> Result<Value> {
++    if enabled() {
++        bail!("Review inference is forbidden inside requesting workers");
++    }
++    #[derive(serde::Deserialize)]
++    #[serde(deny_unknown_fields)]
++    struct Review {
++        provider: Option<String>,
++        id: String,
++        prompt: String,
++    }
++    let request: Review = serde_json::from_value(params)?;
++    if request.prompt.is_empty() || request.prompt.len() > 65536 {
++        bail!("Invalid review prompt");
++    }
++    let config = crate::config::Config::global();
++    let explicit_provider = request
++        .provider
++        .as_ref()
++        .is_some_and(|value| !value.is_empty());
++    let name = request
++        .provider
++        .filter(|s| !s.is_empty())
++        .map(Ok)
++        .unwrap_or_else(|| config.get_goose_provider())?;
++    let entry = crate::providers::get_from_registry(&name).await?;
++    if entry.runs_own_tool_loop() {
++        bail!("This review provider does not offer tool-less inference");
++    }
++    let id = if request.id.is_empty() {
++        if explicit_provider {
++            entry.metadata().default_model.clone()
++        } else {
++            config.get_goose_model()?
++        }
++    } else {
++        request.id
++    };
++    let model = entry.normalize_model_config(
++        crate::model_config::model_config_from_user_config(&name, &id)?,
++    )?;
++    if model.toolshim {
++        bail!("Review inference does not support toolshim");
++    }
++    let provider = entry.create(Vec::new()).await?;
++    if provider.manages_own_context() {
++        bail!("Review inference requires a tool-less provider");
++    }
++    let (reply, _) = tokio::time::timeout(
++        Duration::from_secs(60),
++        provider.complete(
++            &model,
++            "",
++            &[Message::user().with_text(request.prompt)],
++            &[],
++        ),
++    )
++    .await??;
++    Ok(json!({"text":reply.as_concat_text(),"model":{"provider":name,"id":model.model_name}}))
++}

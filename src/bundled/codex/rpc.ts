@@ -56,7 +56,7 @@ export class AppServer {
     private readonly toolCall?: (call: ToolCall) => Promise<ToolReply>,
   ) {}
 
-  async open(spawn: Spawn, cwd?: string) {
+  async open(spawn: Spawn, cwd?: string, protectedRuntime = false) {
     this.process = await spawn("app-server", {
       ...(cwd ? { cwd } : {}),
       onStdout: (data) => this.read(data),
@@ -73,24 +73,34 @@ export class AppServer {
       await this.close();
       throw this.failure;
     }
-    await this.request("initialize", {
-      clientInfo: {
-        name: "buzz_codex_plugin",
-        title: "Buzz Codex",
-        version: "0.1.0",
+    const initialized = await this.request<{ userAgent?: string }>(
+      "initialize",
+      {
+        clientInfo: {
+          name: "buzz_codex_plugin",
+          title: "Buzz Codex",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: [
+            "item/agentMessage/delta",
+            "item/reasoning/summaryTextDelta",
+            "item/reasoning/textDelta",
+            "item/plan/delta",
+            "item/commandExecution/outputDelta",
+            "item/fileChange/outputDelta",
+          ],
+        },
       },
-      capabilities: {
-        experimentalApi: true,
-        optOutNotificationMethods: [
-          "item/agentMessage/delta",
-          "item/reasoning/summaryTextDelta",
-          "item/reasoning/textDelta",
-          "item/plan/delta",
-          "item/commandExecution/outputDelta",
-          "item/fileChange/outputDelta",
-        ],
-      },
-    });
+    );
+    if (
+      protectedRuntime &&
+      !initialized.userAgent?.includes("buzz-protection-v2")
+    ) {
+      await this.close();
+      throw new Error("This Codex build lacks mandatory security hooks");
+    }
     await this.send({ method: "initialized" });
     return this;
   }

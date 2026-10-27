@@ -26,6 +26,7 @@ it("observes saved conversations with the status of open sessions", () => {
   apply({
     pluginOwner: { id: "buzz.goose", revision: "r1" },
     host: { request: vi.fn() },
+    agentProtection: { registerModels: vi.fn() },
     agents: {
       register: (registered: AgentType) => {
         type = registered;

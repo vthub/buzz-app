@@ -429,21 +429,29 @@ it("lets go of the hand-over lock before Codex starts", async () => {
   );
   await mkdir(f.own, { recursive: true });
   await writeFile(join(f.own, "auth.json"), "first", { mode: 0o600 });
+  let observed!: () => void, failed!: (error: Error) => void;
+  const boundary = new Promise<void>((resolve, reject) => {
+    observed = resolve;
+    failed = reject;
+  });
+  const watcher = watch(f.home, (_event, name) => {
+    if (name === "started") observed();
+  });
+  watcher.once("error", failed);
   // An app server that stays up, as Buzz's does, must not hold up the next run.
   const first = f.step("run");
   try {
-    await expect
-      .poll(() =>
-        stat(started).then(
-          () => true,
-          () => false,
-        ),
-      )
-      .toBe(true);
+    await Promise.race([
+      boundary,
+      first.then(() => {
+        throw new Error("Codex exited before its startup boundary");
+      }),
+    ]);
     await signIn(f.own, "second");
     await f.step("run");
     expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("second");
   } finally {
+    watcher.close();
     first.child.kill();
     await first.catch(() => {});
   }

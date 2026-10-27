@@ -3,6 +3,7 @@
 // pin's small one. Tauri names the target it builds for in
 // TAURI_ENV_TARGET_TRIPLE; without it, goose-acp is built for this machine.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -10,6 +11,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -31,7 +33,11 @@ const binary = join(destination, name);
 const target = join(root, "target/goose-acp-build");
 // What the staged binary was built from, kept out of the shipped directory.
 const stampPath = join(target, "staged.json");
-const stamp = `${JSON.stringify({ revision: pin.revision, features: pin.features, profile, triple }, null, 2)}\n`;
+const patchPath = join(root, "runtime/goose-security.patch");
+const protection = createHash("sha256")
+  .update(readFileSync(patchPath))
+  .digest("hex");
+const stamp = `${JSON.stringify({ revision: pin.revision, features: pin.features, profile, triple, protection }, null, 2)}\n`;
 
 if (existsSync(binary) && read(stampPath) === stamp) {
   console.log(`goose-acp ready (${pin.revision.slice(0, 9)}, ${profile})`);
@@ -44,8 +50,24 @@ console.log(
 const source = join(root, "target/goose-acp-src");
 mkdirSync(source, { recursive: true });
 run("git", ["init", "--quiet"]);
-run("git", ["fetch", "--quiet", "--depth", "1", pin.repository, pin.revision]);
-run("git", ["checkout", "--quiet", "--force", "--detach", "FETCH_HEAD"]);
+if (
+  spawnSync("git", ["cat-file", "-e", `${pin.revision}^{commit}`], {
+    cwd: source,
+    stdio: "ignore",
+  }).status !== 0
+)
+  run("git", [
+    "fetch",
+    "--quiet",
+    "--depth",
+    "1",
+    pin.repository,
+    pin.revision,
+  ]);
+run("git", ["checkout", "--quiet", "--force", "--detach", pin.revision]);
+rmSync(join(source, "crates/goose/src/buzz_security.rs"), { force: true });
+run("git", ["apply", "--check", patchPath]);
+run("git", ["apply", patchPath]);
 run(
   "cargo",
   [

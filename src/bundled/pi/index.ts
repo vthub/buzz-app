@@ -16,7 +16,7 @@ export const TYPE_ID = "pi";
  * which includes the first install of Pi's packages. */
 const HANDOVER_MS = 2 * 60_000;
 
-export const inject = ["agents", "host"];
+export const inject = ["agents", "host", "agentProtection"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start the Pi host; no unusable type elsewhere.
   if (!isTauri()) return;
@@ -41,6 +41,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     },
   );
+  ctx.agentProtection.registerModels({
+    label: "Pi",
+    models: async () => {
+      const { providers } = await runtime.setup.providers();
+      const choices = await Promise.all(
+        providers
+          .filter((provider) => provider.configured)
+          .map(async (provider) =>
+            (await runtime.setup.models(provider.id)).map((model) => ({
+              provider: provider.id,
+              id: model.id,
+              label: `${provider.name} · ${model.label}`,
+            })),
+          ),
+      );
+      return choices.flat();
+    },
+    complete: (model, prompt, signal) =>
+      runtime.setup.review(model, prompt, signal),
+  });
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
     runtime,

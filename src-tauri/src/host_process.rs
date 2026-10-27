@@ -4,7 +4,9 @@
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
 //! app exits. A page that reloaded hears nothing of it after. It runs with the
 //! user's own access, with optional native containment for protected workers.
+mod claude_hooks;
 mod protection;
+use claude_hooks::ClaudeHooks;
 use protection::ProcessProtection;
 
 use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
@@ -62,6 +64,7 @@ pub(crate) enum ProcessEvent {
 }
 
 struct Entry {
+    hooks: Option<ClaudeHooks>,
     plugin: String,
     /// Its process group, which is its own pid.
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -106,13 +109,25 @@ impl HostProcesses {
     }
     /// Starts `command`, owned by `plugin`, and streams its output to `on_event`,
     /// unless the page that asked during `page` has since gone.
+    #[cfg(test)]
     fn start(
+        &self,
+        page: u64,
+        plugin: String,
+        program: &str,
+        command: Command,
+        on_event: Channel<ProcessEvent>,
+    ) -> Result<u64, String> {
+        self.start_guarded(page, plugin, program, command, on_event, false)
+    }
+    fn start_guarded(
         &self,
         page: u64,
         plugin: String,
         program: &str,
         mut command: Command,
         on_event: Channel<ProcessEvent>,
+        claude_hooks: bool,
     ) -> Result<u64, String> {
         let state = self.clone();
         let mut registry = self.registry();
@@ -135,11 +150,19 @@ impl HostProcesses {
             .spawn()
             .map_err(|error| format!("Could not start {program}: {error}"))?;
         let handle = registry.next;
+        let hooks = if claude_hooks {
+            Some(ClaudeHooks::new(
+                child.id().ok_or("Claude has no process group")?,
+            ))
+        } else {
+            None
+        };
         registry.next += 1;
         let (stop, stopped) = oneshot::channel();
         registry.entries.insert(
             handle,
             Entry {
+                hooks: hooks.clone(),
                 plugin,
                 group: child.id(),
                 stdin: child
@@ -154,14 +177,19 @@ impl HostProcesses {
         let (gone, reader_gone) = oneshot::channel::<()>();
         let gone = Arc::new(Mutex::new(Some(gone)));
         let readers = [
-            child
-                .stdout
-                .take()
-                .map(|out| forward(out, Stream::Stdout, on_event.clone(), gone.clone())),
+            child.stdout.take().map(|out| {
+                forward(
+                    out,
+                    Stream::Stdout,
+                    on_event.clone(),
+                    gone.clone(),
+                    hooks.clone(),
+                )
+            }),
             child
                 .stderr
                 .take()
-                .map(|err| forward(err, Stream::Stderr, on_event.clone(), gone.clone())),
+                .map(|err| forward(err, Stream::Stderr, on_event.clone(), gone.clone(), None)),
         ];
         #[cfg(unix)]
         let group = child.id().map(|pid| pid as i32);
@@ -194,6 +222,9 @@ impl HostProcesses {
                     }
                 }
             };
+            if let Some(hooks) = &hooks {
+                hooks.close();
+            }
             // Descendants that outlived it go with it.
             #[cfg(unix)]
             if let Some(group) = group {
@@ -228,22 +259,32 @@ impl HostProcesses {
         if data.len() > MAX_WRITE_BYTES {
             return Err("Write is too large".into());
         }
-        let stdin = self.owned(plugin, handle, |entry| {
-            if close {
-                entry.stdin.take()
-            } else {
-                entry.stdin.clone()
-            }
+        let (stdin, hooks) = self.owned(plugin, handle, |entry| {
+            (
+                if close {
+                    entry.stdin.take()
+                } else {
+                    entry.stdin.clone()
+                },
+                entry.hooks.clone(),
+            )
         })?;
         let stdin = stdin.ok_or("The process input is closed")?;
         let mut stdin = stdin.lock().await;
+        if let Some(hooks) = &hooks {
+            hooks.input(data.as_bytes())?;
+        }
         let written = async {
             stdin.write_all(data.as_bytes()).await?;
             stdin.flush().await
         };
-        written
-            .await
-            .map_err(|_| "The process is not reading its input".into())
+        let result = written.await;
+        if result.is_err() {
+            if let Some(hooks) = hooks {
+                hooks.trip();
+            }
+        }
+        result.map_err(|_| "The process is not reading its input".into())
     }
     fn kill(&self, plugin: &str, handle: u64) -> Result<(), String> {
         if let Some(stop) = self.owned(plugin, handle, |entry| {
@@ -345,6 +386,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     };
     #[cfg(not(target_os = "macos"))]
     let _ = &registry;
+    let claude_hooks = protection.is_some() && plugin == "buzz.claude-code";
     let mut command = if let Some(protection) = protection {
         #[cfg(not(target_os = "macos"))]
         {
@@ -419,7 +461,14 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     #[cfg(unix)]
     command.as_std_mut().process_group(0);
 
-    processes.start(page, plugin, &declared.program, command, on_event)
+    processes.start_guarded(
+        page,
+        plugin,
+        &declared.program,
+        command,
+        on_event,
+        claude_hooks,
+    )
 }
 
 /// Writes `data` to the process's stdin; `close` then ends its input.
@@ -452,6 +501,7 @@ fn forward(
     stream: Stream,
     channel: Channel<ProcessEvent>,
     gone: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    hooks: Option<ClaudeHooks>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let mut buffer = vec![0; READ_BYTES];
@@ -462,6 +512,11 @@ fn forward(
                 Ok(read) => read,
             };
             pending.extend_from_slice(&buffer[..read]);
+            if let Some(hooks) = &hooks {
+                if hooks.output(&buffer[..read]).is_err() {
+                    break;
+                }
+            }
             let data = take_text(&mut pending);
             if data.is_empty() {
                 continue;

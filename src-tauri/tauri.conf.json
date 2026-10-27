@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev:desktop --port 1430",
     "devUrl": "http://localhost:1430",
-    "beforeBuildCommand": "node scripts/build-goose-acp.mjs && node scripts/build-agent-command.mjs && pnpm build",
+    "beforeBuildCommand": "node scripts/build-goose-acp.mjs && node scripts/build-codex-protected.mjs && node scripts/build-agent-command.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {

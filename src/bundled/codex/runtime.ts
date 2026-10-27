@@ -3,6 +3,8 @@ import type { Host } from "../../features/host/service";
 import { nativeHookState } from "./hooks";
 import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import type { WorkOutcome } from "../../features/agents/local-activity";
+import type { AgentProtection } from "../../features/agent-protection/service";
+import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
@@ -172,6 +174,7 @@ type Entry = {
   waiting: Set<Request>;
 };
 type Server = {
+  protection?: AgentProtection;
   rpc: AppServer;
   opening: Promise<AppServer>;
   /** Threads this process has loaded, and the agent, by key, each belongs to. */
@@ -241,6 +244,7 @@ function textOf(event: EventData, name: string) {
 export class CodexRuntime {
   private entries = new Map<AgentKey, Entry>();
   private server: Server | undefined;
+  private protectedServers = new Map<AgentKey, Server>();
   private stopping = new Map<AgentKey, Promise<void>>();
   private views = new Map<AgentKey, readonly SessionView[]>();
   private listeners = new Set<() => void>();
@@ -272,6 +276,9 @@ export class CodexRuntime {
         input: unknown,
       ): Promise<Record<string, unknown>>;
     },
+    private readonly protectionHost?: Pick<Host, "spawn" | "serveMcp">,
+    private readonly handle: (pubkey: string) => AgentHandle | undefined = () =>
+      undefined,
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -334,7 +341,9 @@ export class CodexRuntime {
         return;
       }
       if (!saved) throw new Error("There is no session here to compact yet.");
-      const server = this.open();
+      if (agent.protection && !this.handle(agent.key)?.protection)
+        throw new Error("The protected agent has no live policy binding");
+      const server = this.open(this.handle(agent.key));
       const rpc = await server.opening;
       const settings = this.resolveConfig(agent.config);
       const workspace = await this.workspace(settings.workspace);
@@ -471,7 +480,13 @@ export class CodexRuntime {
           entry.abort.abort();
           this.entries.delete(pubkey);
           this.views.delete(pubkey);
-          if (this.server) this.stop(this.server, pubkey, entry);
+          const server = this.protectedServers.get(pubkey) ?? this.server;
+          if (server) this.stop(server, pubkey, entry);
+        }
+        const protectedServer = this.protectedServers.get(pubkey);
+        if (protectedServer) {
+          await protectedServer.rpc.close();
+          this.protectedServers.delete(pubkey);
         }
         await this.stopping.get(pubkey);
       })();
@@ -488,12 +503,19 @@ export class CodexRuntime {
       }
     for (const [key, entry] of this.entries)
       if (!present.has(key)) {
-        entry.abort.abort();
-        this.entries.delete(key);
-        this.views.delete(key);
-        if (this.server) this.stop(this.server, key, entry);
+        if (this.protectedServers.has(key)) {
+          void this.retire(key).catch(() => undefined);
+        } else {
+          entry.abort.abort();
+          this.entries.delete(key);
+          this.views.delete(key);
+          if (this.server) this.stop(this.server, key, entry);
+        }
       }
-    if (!present.size) this.close();
+    if (!present.size) {
+      void this.server?.rpc.close();
+      this.server = undefined;
+    }
     for (const listener of this.listeners) listener();
   }
   /** Other agents share the server, so a stopped agent's turns interrupt
@@ -510,7 +532,11 @@ export class CodexRuntime {
       ]);
       for (const [threadId, owner] of server.threads)
         if (owner === agent) {
-          if (this.server !== server) return;
+          if (
+            this.server !== server &&
+            this.protectedServers.get(agent) !== server
+          )
+            return;
           server.threads.delete(threadId);
           await server.rpc
             .request("thread/backgroundTerminals/clean", { threadId })
@@ -540,10 +566,76 @@ export class CodexRuntime {
     this.open();
   }
   private close() {
+    for (const server of this.protectedServers.values())
+      void server.rpc.close();
+    this.protectedServers.clear();
     void this.server?.rpc.close();
     this.server = undefined;
   }
-  private open() {
+  private open(agent?: Pick<AgentHandle, "key" | "pubkey" | "protection">) {
+    if (agent?.protection) {
+      const protection = agent.protection;
+      protection.assertAvailable();
+      const prior = this.protectedServers.get(agent.key);
+      if (prior) {
+        if (prior.protection?.key !== protection.key)
+          throw new Error("Retire the previous protected Codex worker first");
+        return prior;
+      }
+      const host = this.protectionHost;
+      if (!host?.spawn || !host.serveMcp)
+        throw new Error("Protected Codex requires the desktop security host");
+      const spawn = host.spawn.bind(host);
+      const serveMcp = host.serveMcp.bind(host);
+      const rpc = new AppServer((call) => this.tool(call));
+      const server: Server = {
+        rpc,
+        protection,
+        threads: new Map(),
+        opening: Promise.resolve(rpc),
+      };
+      server.opening = (async () => {
+        const bridge = await nativeProtectionBridge(serveMcp, protection);
+        rpc.onMessage((wire) => {
+          if (wire.method === "connection/closed") {
+            void bridge.close();
+            if (this.protectedServers.get(agent.key) === server)
+              this.protectedServers.delete(agent.key);
+          }
+        });
+        try {
+          return await rpc.open(
+            (_id, options) =>
+              spawn("protected-app-server", {
+                ...options,
+                env: {
+                  ...bridge.env,
+                  BASH_ENV: null,
+                  ENV: null,
+                  DYLD_INSERT_LIBRARIES: null,
+                  DYLD_LIBRARY_PATH: null,
+                  DYLD_FRAMEWORK_PATH: null,
+                  LD_PRELOAD: null,
+                  LD_LIBRARY_PATH: null,
+                },
+                protection: protection.processProtection,
+              }),
+            defaults.workspace,
+            true,
+          );
+        } catch (error) {
+          await bridge.close();
+          await rpc.close();
+          throw error;
+        }
+      })();
+      this.protectedServers.set(agent.key, server);
+      void server.opening.catch(() => {
+        if (this.protectedServers.get(agent.key) === server)
+          this.protectedServers.delete(agent.key);
+      });
+      return server;
+    }
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
     // Threads set their own cwd; the process just needs a directory that exists.
@@ -575,6 +667,8 @@ export class CodexRuntime {
     return server;
   }
   private entry(agent: AgentKey, scope: string) {
+    if (this.retirements.has(agent))
+      throw new Error("This agent’s previous native sessions have not retired");
     const prior = this.entries.get(agent);
     if (prior) return prior;
     const saved = this.load(this.storageKey(scope, agent));
@@ -953,7 +1047,7 @@ export class CodexRuntime {
           "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
       };
     await entry.after.catch(() => undefined);
-    const server = this.open();
+    const server = this.open(agent);
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
     let release!: () => void;
     const once: Once = {
@@ -1250,6 +1344,17 @@ export class CodexRuntime {
     const owner = request ?? (once as Once);
     const { agent } = owner;
     const client = appClient(agent, {
+      protectionContext: async () => {
+        const rpc =
+          active?.rpc ??
+          this.protectedServers.get(agent.key)?.rpc ??
+          this.server?.rpc;
+        if (!rpc) throw new Error("The protected Codex session is unavailable");
+        return rpc.request("thread/read", {
+          threadId: call.threadId,
+          includeTurns: true,
+        });
+      },
       relayAuthor: this.reads(agent.key)?.relayAuthor?.(),
       signingAuthority: this.reads(agent.key)?.workflowAuthority(),
       read: (path) => readFile(this.spawn, turn.workspace, path, turn.signal),
@@ -1510,7 +1615,7 @@ export class CodexRuntime {
       !disabled && this.server?.rpc === rpc && this.hooks
         ? await nativeHookState(rpc, workspace)
         : undefined;
-    const hookAdapter = disabled ? undefined : this.hooks;
+    const hookAdapter = disabled || agent.protection ? undefined : this.hooks;
     const bridge = hookAdapter
       ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
           hookAdapter.run(agent.key, session, event, input),
@@ -1548,7 +1653,7 @@ export class CodexRuntime {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
-    const server = this.open();
+    const server = this.open(request.agent);
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
     const active: Active = {

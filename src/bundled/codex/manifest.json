@@ -13,6 +13,11 @@
     "files": true,
     "processes": [
       {
+        "id": "protected-app-server",
+        "program": "codex-app-server-protected",
+        "bundled": true
+      },
+      {
         "id": "workspace",
         "program": "pwd"
       },

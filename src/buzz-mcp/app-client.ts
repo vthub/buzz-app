@@ -25,6 +25,7 @@ export function appClient(
     /** Reject operations after the owning turn or community has ended. */
     check?(): void;
     signal?: AbortSignal;
+    protectionContext?(): Promise<unknown>;
   }>,
 ): BuzzClient {
   const check = () => {
@@ -45,6 +46,22 @@ export function appClient(
             action: import("../features/agent-protection/service").ProtectionAction,
           ) => {
             check();
+            if (
+              action.kind === "tool" &&
+              agent.protection?.phases?.tool !== false
+            ) {
+              if (!options.protectionContext)
+                throw new Error(
+                  "The protected tool has no native conversation context",
+                );
+              action = {
+                ...action,
+                content: {
+                  ...(action.content as object),
+                  conversation: await options.protectionContext(),
+                },
+              };
+            }
             await agent.protection?.check(
               action,
               options.signal ?? new AbortController().signal,

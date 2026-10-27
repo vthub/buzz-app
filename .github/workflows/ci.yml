@@ -55,7 +55,8 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     name: Protected agents (macOS)
     runs-on: macos-15
-    timeout-minutes: 15
+    # Native pinned runtime builds add cold compilation to the kernel fixtures.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -74,8 +75,31 @@ jobs:
         with:
           key: agent-protection
           save-if: ${{ github.event_name == 'push' }}
+      - name: Cache pinned native security runtimes
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/goose-acp-src
+            target/goose-acp-build
+            target/codex-protected-src
+            target/codex-protected-build
+          key: protected-runtimes-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('runtime/goose-acp.json', 'runtime/goose-security.patch', 'runtime/codex-security.json', 'runtime/codex-security.patch', 'bin/.rust*.pkg') }}
+      - name: Build exact protected Goose and Codex runtimes
+        run: |
+          source bin/activate-hermit
+          node scripts/build-goose-acp.mjs --dev
+          node scripts/build-codex-protected.mjs --dev
+      - name: Install exact protected Claude fixture
+        run: ./bin/node scripts/install-protected-claude-test.mjs
+      - name: Real native model and tool boundaries
+        env:
+          BUZZ_TEST_WORKERS: "2"
+          CODEX_PROTECTION_BIN: ${{ github.workspace }}/src-tauri/resources/bin/codex-app-server-protected
+          GOOSE_PROTECTION_BIN: ${{ github.workspace }}/src-tauri/resources/bin/goose-acp
+          CLAUDE_PROTECTION_BIN: ${{ github.workspace }}/target/protected-claude-test/claude
+        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/protection/native-vitest.json evidence=test-results/protection/native-timing.json title="Native security hooks" -- ./bin/pnpm exec vitest run src/bundled/codex/protection.live.test.ts src/bundled/goose/protection.live.test.ts src/bundled/claude-code/protection.live.test.ts --reporter=default --reporter=json --outputFile=test-results/protection/native-vitest.json
       - name: Native approval-state containment
-        run: ./bin/cargo test --manifest-path src-tauri/Cargo.toml host_process::protection --lib
+        run: ./bin/cargo test --manifest-path src-tauri/Cargo.toml host_process --lib
       - name: Protection test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

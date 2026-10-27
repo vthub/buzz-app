@@ -443,13 +443,17 @@ export class AgentSessions {
    * agents. */
   async shutdown() {
     this.disposed = true;
-    const live = [...this.live.values(), ...this.once.values()].filter((entry): entry is Live => !!entry);
+    const live = [...this.live.values(), ...this.once.values()].filter(
+      (entry): entry is Live => !!entry,
+    );
     for (const [key, entry] of this.live) {
       clearTimeout(entry.timer);
       this.live.delete(key);
       this.shown.delete(key);
     }
-    await Promise.all(live.map((entry) => entry.process.close(entry.session, true)));
+    await Promise.all(
+      live.map((entry) => entry.process.close(entry.session, true)),
+    );
     this.options.onChange?.();
   }
   dispose() {

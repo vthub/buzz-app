@@ -31,6 +31,11 @@ newer() {
 command="$1"
 shift
 case "$command" in
+runtime)
+  version="${BUZZ_CLAUDE_VERSION:-$(cat "$dir/current" 2>/dev/null)}"
+  valid "$version" && test -x "$dir/$version/claude" || exit 127
+  perl -MCwd=abs_path -MJSON::PP -e 'print JSON::PP->new->encode({version=>$ARGV[0],root=>abs_path($ARGV[1])})' "$version" "$dir"
+  ;;
 run)
   # A failed exec returns (execfail, without errexit), so the launcher can
   # look again when a release it read was pruned before it started.
@@ -94,7 +99,7 @@ use)
   # one, which another build may be testing; remove the rest.
   for folder in "$dir"/*/; do
     folder=$(basename "$folder")
-    [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] ||
+    [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] || [ "$folder" = "2.1.305" ] ||
       newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
   done
   ;;

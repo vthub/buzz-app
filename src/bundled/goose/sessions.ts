@@ -4,7 +4,8 @@ import {
   AgentSessions as AcpAgentSessions,
   type SessionsOptions as AcpSessionsOptions,
 } from "../../features/agent-harness/acp/agent-sessions";
-import type { AcpProcess } from "../../features/agent-harness/acp/process";
+import type { AgentProtection } from "../../features/agent-protection/service";
+import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
 import { GooseProcess, type GooseHost, type ServeMcp } from "./goose";
 import type {
   SavedConversation,
@@ -26,22 +27,57 @@ export {
  * home folder when a session first needs it, and again after it exits. One
  * runtime shares one. */
 export class SharedProcess {
-  private ready: Promise<AcpProcess> | undefined;
+  private ready: Promise<GooseProcess> | undefined;
   constructor(
     private readonly host: GooseHost,
     /** Starts a session's MCP server for its agent's tools. */
     private readonly serve: ServeMcp,
+    private readonly protection?: AgentProtection,
   ) {}
 
   /** The running process. One that failed to start is started again on the
    * next call. */
-  get(): Promise<AcpProcess> {
+  get(): Promise<GooseProcess> {
+    this.protection?.assertAvailable();
     if (this.ready) return this.ready;
-    const ready = (async () =>
-      GooseProcess.start(this.host.spawn, {
-        cwd: await this.host.resolveDirectory("~"),
-        serve: this.serve,
-      }))();
+    const ready = (async () => {
+      const bridge =
+        this.protection &&
+        (await nativeProtectionBridge(this.serve, this.protection));
+      try {
+        const goose = await GooseProcess.start(
+          (id, options) =>
+            this.host.spawn(id, {
+              ...options,
+              ...(this.protection && {
+                protection: this.protection.processProtection,
+              }),
+            }),
+          {
+            cwd: await this.host.resolveDirectory("~"),
+            serve: this.serve,
+            ...(bridge && {
+              protected: true,
+              env: {
+                ...bridge.env,
+                BASH_ENV: null,
+                ENV: null,
+                DYLD_INSERT_LIBRARIES: null,
+                DYLD_LIBRARY_PATH: null,
+                DYLD_FRAMEWORK_PATH: null,
+                LD_PRELOAD: null,
+                LD_LIBRARY_PATH: null,
+              },
+            }),
+          },
+        );
+        void goose.exited.finally(() => bridge?.close());
+        return goose;
+      } catch (error) {
+        await bridge?.close();
+        throw error;
+      }
+    })();
     const forget = () => {
       if (this.ready === ready) this.ready = undefined;
     };
@@ -51,9 +87,14 @@ export class SharedProcess {
   }
   /** Stops it, failing every session in it. */
   stop() {
+    void this.shutdown().catch(() => undefined);
+  }
+  async shutdown() {
     const ready = this.ready;
     this.ready = undefined;
-    void ready?.then((goose) => goose.kill()).catch(() => undefined);
+    const goose = await ready;
+    await goose?.kill();
+    await goose?.exited;
   }
 }
 

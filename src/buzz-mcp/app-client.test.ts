@@ -1,6 +1,37 @@
 import { expect, it, vi } from "vitest";
 import type { AgentHandle } from "../features/agents/service";
+import type { AgentProtection } from "../features/agent-protection/service";
 import { appClient } from "./app-client";
+
+it("binds shared-tool review to native conversation context and refuses missing context", async () => {
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const agent = {
+    pubkey: "agent",
+    protection: { check },
+  } as unknown as AgentHandle;
+  const options = {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  };
+  const action = {
+    kind: "tool" as const,
+    session: "native-session",
+    content: { command: "write", conversation: "untrusted replacement" },
+  };
+  await expect(appClient(agent, options).protect?.(action)).rejects.toThrow(
+    "no native conversation context",
+  );
+  expect(check).not.toHaveBeenCalled();
+  const conversation = [{ role: "user", text: "Only read" }];
+  await appClient(agent, {
+    ...options,
+    protectionContext: async () => conversation,
+  }).protect?.(action);
+  expect(check.mock.calls[0]?.[0]).toEqual({
+    ...action,
+    content: { command: "write", conversation },
+  });
+});
 
 it("carries connection authorities independently of query event authors", async () => {
   const query = vi.fn(async () => []);

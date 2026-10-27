@@ -10,6 +10,11 @@ import type {
   HostProcess,
   HostProcessOptions,
 } from "../../features/host/service";
+import {
+  protectedRuntime,
+  PROTECTED_CLAUDE_VERSION,
+  type ClaudeProtection,
+} from "./security";
 
 export type ActivityReceipt = Readonly<{
   /** Presentation destination; channel-shared sessions may handle several threads. */
@@ -25,6 +30,7 @@ export type Spawn = (
 ) => Promise<HostProcess>;
 
 export type ClaudeLaunch = Readonly<{
+  protection?: ClaudeProtection;
   cwd: string;
   /** Folders besides `cwd` that the session may work in and stay in. */
   directories?: readonly string[];
@@ -106,6 +112,22 @@ export const ENV: Readonly<Record<string, string | null>> = {
 };
 
 export class ClaudeProcess {
+  private protection: ClaudeProtection | undefined;
+  private protectionLifetime = new AbortController();
+  private protectedInstructions = "";
+  private protectedHistory: unknown = [];
+  private readonly protectedEvents: Message[] = [];
+  private resuming = false;
+  private reviewText = "";
+  get result() {
+    return this.reviewText;
+  }
+  protectionContext() {
+    return structuredClone({
+      transcript: this.protectedHistory,
+      events: this.protectedEvents,
+    });
+  }
   /** Its session, known once the first turn starts (or at once when resuming). */
   sessionId: string | undefined;
   /** The conversation it serves, set when a spare is put to use. */
@@ -161,6 +183,7 @@ export class ClaudeProcess {
   ) {
     this.sessionId = resume;
     this.exited = process.exited.then((code) => {
+      this.protectionLifetime.abort();
       this.alive = false;
       for (const resolve of this.calls.values())
         resolve({ subtype: "error", error: "Claude exited" });
@@ -183,7 +206,12 @@ export class ClaudeProcess {
   /** Starts `claude` without its prompt. This is most of what a start costs,
    * and fixes nothing about the agent it serves but its folder, model and
    * effort. */
-  static async spawn(spawn: Spawn, launch: Omit<ClaudeLaunch, "systemPrompt">) {
+  static async spawn(
+    spawn: Spawn,
+    launch: Omit<ClaudeLaunch, "systemPrompt"> & { systemPrompt?: string },
+  ) {
+    launch.protection?.gate.assertAvailable();
+    const security = launch.protection && (await protectedRuntime(spawn));
     let claude: ClaudeProcess | undefined;
     const early: string[] = [];
     const earlyErrors: string[] = [];
@@ -198,6 +226,16 @@ export class ClaudeProcess {
         // Recent models return empty thinking unless asked for summaries.
         "--thinking-display",
         "summarized",
+        ...(security
+          ? [
+              "--system-prompt",
+              launch.systemPrompt ?? "",
+              "--setting-sources",
+              "",
+              "--strict-mcp-config",
+              "--disable-slash-commands",
+            ]
+          : []),
         ...(launch.discovery
           ? [
               "--safe-mode",
@@ -231,7 +269,53 @@ export class ClaudeProcess {
           : []),
       ],
       cwd: launch.cwd,
-      env: ENV,
+      env: {
+        ...ENV,
+        ...(launch.discovery
+          ? {
+              CLAUDE_CODE_DISABLE_FILE_MENTIONS: "1",
+              CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+              CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
+              CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+            }
+          : {}),
+        ...(security
+          ? {
+              BUZZ_CLAUDE_VERSION: PROTECTED_CLAUDE_VERSION,
+              CLAUDE_CODE_EAGER_FLUSH: "1",
+              DISABLE_COMPACT: "1",
+              CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+              ANTHROPIC_BETAS: null,
+              CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK: "1",
+              CLAUDE_CODE_DISABLE_REFUSAL_RETRY: "1",
+              CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1",
+              CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+              CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+              CLAUDE_CODE_DISABLE_FILE_MENTIONS: "1",
+              CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
+              CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+              CLAUDE_CODE_DISABLE_CRON: "1",
+              BASH_ENV: null,
+              ENV: null,
+              DYLD_INSERT_LIBRARIES: null,
+              DYLD_LIBRARY_PATH: null,
+              DYLD_FRAMEWORK_PATH: null,
+              LD_PRELOAD: null,
+              LD_LIBRARY_PATH: null,
+            }
+          : {}),
+      },
+      ...(security && launch.protection
+        ? {
+            protection: {
+              readOnlyPaths: [
+                ...launch.protection.gate.processProtection.readOnlyPaths,
+                security.root,
+              ],
+              hiddenPaths: launch.protection.gate.processProtection.hiddenPaths,
+            },
+          }
+        : {}),
       onStdout: (data) => (claude ? claude.read(data) : early.push(data)),
       onStderr: (data) =>
         claude ? claude.readError(data) : earlyErrors.push(data),
@@ -243,6 +327,9 @@ export class ClaudeProcess {
       launch.model,
       launch.hook,
     );
+    claude.protection = launch.protection;
+    claude.resuming = !!launch.resume;
+    claude.protectedInstructions = launch.systemPrompt ?? "";
     for (const data of earlyErrors) claude.readError(data);
     for (const data of early) claude.read(data);
     return claude;
@@ -251,40 +338,94 @@ export class ClaudeProcess {
   /** Gives a started process its prompt, and its tools to whoever it now
    * works for. Loads settings and tools now rather than on the first message. */
   async initialize(
-    launch: Pick<ClaudeLaunch, "systemPrompt" | "tools" | "hook">,
+    launch: Pick<ClaudeLaunch, "systemPrompt" | "tools" | "protection" | "hook">,
   ) {
-    if (launch.tools) this.tools = launch.tools;
-    this.hook = launch.hook;
-    const { written, answer } = this.request({
-      subtype: "initialize",
-      appendSystemPrompt: launch.systemPrompt,
-      ...(launch.tools
-        ? {
-            sdkMcpServers: [TOOL_SERVER],
-            hooks: {
-              ...Object.fromEntries(
-                CLAUDE_HOOK_EVENTS.map((event) => [
-                  event,
-                  [{ hookCallbackIds: [`buzz:${event}`] }],
-                ]),
-              ),
-              PostToolUse: [
-                { hookCallbackIds: ["buzz:PostToolUse"] },
-                { matcher: FINAL_TOOL, hookCallbackIds: ["final"] },
-              ],
-            },
-          }
-        : {}),
-    });
-    await written;
-    this.listed = answer.then((response) => {
-      const models = (response.response as Message | undefined)?.models;
-      return Array.isArray(models)
-        ? models.filter(
-            (model): model is ClaudeModel => typeof model?.value === "string",
-          )
-        : [];
-    });
+    try {
+      if (launch.tools) this.tools = launch.tools;
+      this.hook = launch.protection ? undefined : launch.hook;
+      const { written, answer } = this.request({
+        subtype: "initialize",
+        ...(!launch.protection
+          ? { appendSystemPrompt: launch.systemPrompt }
+          : {}),
+        ...(launch.tools || launch.protection
+          ? {
+              ...(launch.tools ? { sdkMcpServers: [TOOL_SERVER] } : {}),
+              hooks: {
+                ...(launch.protection
+                  ? {
+                      PreToolUse: [
+                        { hookCallbackIds: ["security-tool"], timeout: 600 },
+                      ],
+                      PreCompact: [
+                        {
+                          hookCallbackIds: ["security-incomplete"],
+                          timeout: 600,
+                        },
+                      ],
+                      SessionStart: [
+                        { hookCallbackIds: ["security-session"], timeout: 600 },
+                      ],
+                      UserPromptSubmit: [
+                        {
+                          hookCallbackIds: ["security-incoming"],
+                          timeout: 600,
+                        },
+                      ],
+                      PostToolBatch: [
+                        {
+                          hookCallbackIds: ["security-incoming"],
+                          timeout: 600,
+                        },
+                      ],
+                      PostToolUseFailure: [
+                        {
+                          hookCallbackIds: ["security-incoming"],
+                          timeout: 600,
+                        },
+                      ],
+                    }
+                  : Object.fromEntries(
+                      CLAUDE_HOOK_EVENTS.map(event => [event, [{hookCallbackIds: [`buzz:${event}`]}]]),
+                    )),
+                PostToolUse: [
+                  ...(launch.protection
+                    ? [{ hookCallbackIds: ["security-incoming"], timeout: 600 }]
+                    : [{hookCallbackIds: ["buzz:PostToolUse"]}]),
+                  ...(launch.tools
+                    ? [{ matcher: FINAL_TOOL, hookCallbackIds: ["final"] }]
+                    : []),
+                ],
+              },
+            }
+          : {}),
+      });
+      await written;
+      if (launch.protection) {
+        const timer = setTimeout(() => void this.kill(), 15_000);
+        try {
+          const response = await answer;
+          if (response.subtype !== "success")
+            throw new Error(
+              `Claude did not register protection hooks: ${String(response.error)}`,
+            );
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      this.listed = answer.then((response) => {
+        const models = (response.response as Message | undefined)?.models;
+        return Array.isArray(models)
+          ? models.filter(
+              (model): model is ClaudeModel => typeof model?.value === "string",
+            )
+          : [];
+      });
+    } catch (error) {
+      await this.kill();
+      await this.exited;
+      throw error;
+    }
   }
 
   get running() {
@@ -367,6 +508,13 @@ export class ClaudeProcess {
   async interrupt() {
     if (!this.alive || !this.active) return;
     this.stopping = true;
+    if (this.protection) {
+      this.protectionLifetime.abort();
+      this.lastError = "Protected Claude was stopped";
+      await this.process.kill();
+      await this.exited;
+      return;
+    }
     const answer = await this.call({ subtype: "interrupt" });
     if (answer.subtype === "error" && this.alive) {
       this.stopping = false;
@@ -375,6 +523,7 @@ export class ClaudeProcess {
   }
 
   kill() {
+    this.protectionLifetime.abort();
     return this.process.kill();
   }
 
@@ -487,6 +636,12 @@ export class ClaudeProcess {
   private readonly receipts = new Map<string, ActivityReceipt>();
   private readonly activeReceipts = new Map<string, ActivityReceipt>();
   private handle(message: Message) {
+    // The CLI may emit a tool callback before its asynchronous transcript write.
+    // Keep native protocol evidence alongside persisted history, without replacing it.
+    if (this.protection && ["user", "assistant"].includes(String(message.type)))
+      this.protectedEvents.push(structuredClone(message));
+    if (message.type === "result" && typeof message.result === "string")
+      this.reviewText = message.result;
     if (typeof message.session_id === "string" && message.session_id)
       this.sessionId = message.session_id;
     if (message.type === "system" && message.subtype === "init") {
@@ -627,9 +782,123 @@ export class ClaudeProcess {
           error: { code: -32603, message: String(error?.message ?? error) },
         })),
       });
-    else if (request.subtype === "can_use_tool")
+    else if (
+      request.subtype === "hook_callback" &&
+      this.protection &&
+      [
+        "security-tool",
+        "security-incoming",
+        "security-incomplete",
+        "security-session",
+      ].includes(String(request.callback_id))
+    ) {
+      try {
+        const input = request.input as Message;
+        if (
+          request.callback_id === "security-incomplete" ||
+          (request.callback_id === "security-session" &&
+            !["startup", "resume"].includes(String(input.source)))
+        )
+          throw new Error(
+            "Protected Claude cannot rewrite its reviewed conversation; start a new conversation",
+          );
+        if (
+          request.callback_id === "security-session" &&
+          input.source === "startup" &&
+          !this.resuming
+        )
+          return this.write({
+            type: "control_response",
+            response: success({}),
+          });
+        const tool = request.callback_id === "security-tool";
+        const kind = tool
+          ? "tool"
+          : ["UserPromptSubmit", "SessionStart"].includes(
+                String(input.hook_event_name),
+              )
+            ? "context"
+            : "tool-result";
+        if (tool && ["Agent", "Task"].includes(String(input.tool_name)))
+          throw new Error(
+            "Protected Claude does not delegate outside its reviewed conversation",
+          );
+        if (this.protection.gate.phases?.[kind] === false) {
+          this.protectionLifetime.signal.throwIfAborted();
+          this.protection.gate.assertAvailable();
+          return this.write({
+            type: "control_response",
+            response: success(
+              tool
+                ? {
+                    hookSpecificOutput: {
+                      hookEventName: "PreToolUse",
+                      permissionDecision: "allow",
+                    },
+                  }
+                : {},
+            ),
+          });
+        }
+        if (typeof input.transcript_path !== "string")
+          throw new Error("Claude omitted the protected conversation");
+        const history = await this.protection
+          .history(input.transcript_path, this.protectionLifetime.signal)
+          .catch((error) => {
+            if (
+              input.hook_event_name === "UserPromptSubmit" &&
+              !this.resuming &&
+              !this.began &&
+              /no such file/i.test(String(error))
+            )
+              return [];
+            throw error;
+          });
+        this.protectedHistory = structuredClone(history);
+        await this.protection.gate.check(
+          {
+            kind: tool
+              ? "tool"
+              : ["UserPromptSubmit", "SessionStart"].includes(
+                    String(input.hook_event_name),
+                  )
+                ? "context"
+                : "tool-result",
+            session: this.sessionId ?? "initial",
+            content: {
+              ...(tool
+                ? { title: input.tool_name, arguments: input.tool_input }
+                : {}),
+              instructions: this.protectedInstructions,
+              conversation: history,
+              events: structuredClone(this.protectedEvents),
+              input,
+            },
+          },
+          this.protectionLifetime.signal,
+        );
+        this.protectionLifetime.signal.throwIfAborted();
+        response = success(
+          tool
+            ? {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse",
+                  permissionDecision: "allow",
+                },
+              }
+            : {},
+        );
+      } catch (error) {
+        this.protectionLifetime.abort();
+        this.lastError =
+          error instanceof Error ? error.message : "Security review failed";
+        await this.process.kill();
+        await this.exited;
+        return;
+      }
+    } else if (request.subtype === "can_use_tool")
       response = success({
-        behavior: "allow",
+        behavior: this.protection ? "deny" : "allow",
         updatedInput: request.input ?? {},
       });
     else if (request.subtype === "hook_callback") {

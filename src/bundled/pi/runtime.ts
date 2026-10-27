@@ -255,12 +255,7 @@ export class PiRuntime {
     const current = new Set(agents.map((agent) => agent.key));
     // Its storage may be open for a turn or only for listing its sessions.
     for (const agent of new Set([...this.running, ...this.agents.keys()]))
-      if (!current.has(agent)) {
-        const entry = this.agents.get(agent);
-        if (entry) entry.closed = true;
-        this.agents.delete(agent);
-        void this.pi.request("close", { agent }).catch(() => undefined);
-      }
+      if (!current.has(agent)) void this.retire(agent).catch(() => undefined);
     this.running = current;
     for (const agent of agents) {
       const revision = agent.protectionRevision ?? 0;
@@ -746,6 +741,11 @@ export class PiRuntime {
     const client =
       entry?.handle &&
       appClient(entry.handle, {
+        protectionContext: () =>
+          this.pi.request("protectionContext", {
+            agent: call.agent,
+            conversation: call.conversation,
+          }),
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
         read: (path) => this.readFile(path, { cwd: entry.config.workspace }),

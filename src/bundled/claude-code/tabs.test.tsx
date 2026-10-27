@@ -236,6 +236,7 @@ function applied({
   });
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
+    agentProtection: { registerModels: vi.fn() },
     host: {
       spawn,
       // Offer the installed release unless the test requests an update.
@@ -463,7 +464,7 @@ it("finds the thread's Claude session another build started", async () => {
 });
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents", "host"]);
+  expect(inject).toEqual(["agents", "host", "agentProtection"]);
   const { type } = installed();
   expect(type).toMatchObject({
     id: "claude-code",

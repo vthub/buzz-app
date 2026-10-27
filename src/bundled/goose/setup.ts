@@ -289,6 +289,30 @@ export class GooseSetup {
     return this.listing;
   }
 
+  review(
+    model: { provider?: string; id: string },
+    prompt: string,
+    signal: AbortSignal,
+  ) {
+    signal.throwIfAborted();
+    return this.with(async (goose) => {
+      const cancel = () => void goose.kill();
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        signal.throwIfAborted();
+        const result = (await goose.request(
+          "_buzz/security/review",
+          { ...model, prompt },
+          65_000,
+        )) as { text: string; model: { provider: string; id: string } };
+        signal.throwIfAborted();
+        return result;
+      } finally {
+        signal.removeEventListener("abort", cancel);
+      }
+    });
+  }
+
   /** Databricks catalogs can lag its endpoints and AI Gateway services;
    * configured providers use live discovery for both Databricks versions.
    * A provider not set up offers none: its catalog's would not run. */

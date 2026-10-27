@@ -28,6 +28,7 @@ it("observes saved sessions with the live status of running ones", () => {
   ]);
   let type: AgentType | undefined;
   apply({
+    agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { request: vi.fn() },
     agents: {

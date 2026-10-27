@@ -123,18 +123,19 @@ export function protectModels(models, inspect, conversationFor) {
 
 /** Hold all native tool output until reviewed, including streaming progress,
  * diagnostics and thrown errors. Wrapping execute also covers safe replay. */
-export function protectTool(tool, inspect) {
+export function protectTool(tool, inspect, preceding = async () => []) {
   return {
     ...tool,
     async execute(original, api, signalled) {
       const args = structuredClone(original);
       const session = String(api.conversationId);
       const signal = signalled.abortSignal;
+      const conversation = structuredClone(await preceding(api, signalled));
       await inspect(
         {
           kind: "tool",
           session,
-          content: { title: tool.name, arguments: args },
+          content: { title: tool.name, arguments: args, conversation },
           ...(typeof args.command === "string"
             ? { command: args.command }
             : {}),
@@ -569,6 +570,7 @@ export function serve({
   /** Agents whose storage failed and that nothing has opened again. */
   const failed = new Set();
   const calls = new Map();
+  const reviews = new Map();
   let called = 0;
   const write = (message) => output.write(`${JSON.stringify(message)}\n`);
   const notify = (method, params) => write({ method, params });
@@ -664,6 +666,20 @@ export function serve({
         throw new Error("Protected Pi does not load user packages");
       const registry = createRegistry();
       const inspect = async (action, signal) => {
+        if (
+          process.env[
+            {
+              context: "BUZZ_SECURITY_CONTEXT",
+              tool: "BUZZ_SECURITY_TOOL",
+              "tool-result": "BUZZ_SECURITY_TOOL_RESULT",
+            }[action.kind]
+          ] === "0"
+        )
+          action = {
+            kind: action.kind,
+            session: action.session,
+            content: null,
+          };
         const result = await call("security", { agent, action }, signal);
         if (result !== true)
           throw new Error("Pi action denied by its protection policy");
@@ -681,7 +697,17 @@ export function serve({
             ? {
                 ...extension,
                 tools: extension.tools?.map((tool) =>
-                  protectTool(tool, inspect),
+                  protectTool(tool, inspect, async (api, context) => {
+                    const conversation = await harness.conversation(
+                      api.conversationId,
+                      context,
+                    );
+                    if (!conversation)
+                      throw new Error(
+                        "The tool's preceding conversation is unavailable",
+                      );
+                    return (await conversation.context(context)).messages;
+                  }),
                 ),
               }
             : extension,
@@ -1036,6 +1062,54 @@ export function serve({
   }
 
   const methods = {
+    async review(turn) {
+      if (protectedAgent)
+        throw new Error("Security inference runs outside requesting workers");
+      if (
+        typeof turn.id !== "string" ||
+        reviews.has(turn.id) ||
+        reviews.size >= 16 ||
+        typeof turn.prompt !== "string" ||
+        Buffer.byteLength(turn.prompt) > 65536
+      )
+        throw new Error("Invalid security review request");
+      const controller = new AbortController();
+      const signal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(TEST_TIMEOUT_MS),
+      ]);
+      reviews.set(turn.id, controller);
+      try {
+        const { found, model } = await choose(turn);
+        signal.throwIfAborted();
+        const reply = await models.completeSimple(
+          found,
+          {
+            messages: [
+              { role: "user", content: turn.prompt, timestamp: Date.now() },
+            ],
+          },
+          { maxTokens: 1024, maxRetries: 0, signal },
+        );
+        signal.throwIfAborted();
+        if (reply.stopReason === "error" || reply.stopReason === "aborted")
+          throw new Error(
+            reply.errorMessage || "Security model did not answer",
+          );
+        return {
+          text: reply.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join(""),
+          model: { provider: model.provider, id: model.modelId },
+        };
+      } finally {
+        reviews.delete(turn.id);
+      }
+    },
+    "cancel-review"({ id }) {
+      reviews.get(id)?.abort();
+    },
     runtime() {
       if (protectedAgent)
         throw new Error("Protected hosts cannot bootstrap another host");
@@ -1166,6 +1240,13 @@ export function serve({
         })),
         ...(page.next ? { next: page.next } : {}),
       };
+    },
+    /** The native conversation snapshot used for a final publication review. */
+    async protectionContext({ agent, conversation }) {
+      const { harness } = await agentOf(agent);
+      const found = await harness.conversation(conversation, context);
+      if (!found) throw new Error("The protected conversation is unavailable");
+      return structuredClone((await found.context(context)).messages);
     },
     /** The usage Pi recorded for a conversation, by `<provider>/<model>`:
      * its answers', and the requests that left no answer, such as
@@ -1408,6 +1489,7 @@ export function serve({
 
   let stopping;
   const stop = () => {
+    for (const review of reviews.values()) review.abort();
     stopping ??= Promise.allSettled(
       [...agents.values()].map((opening) =>
         opening.then(shut, () => undefined),

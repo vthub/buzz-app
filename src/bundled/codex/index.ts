@@ -11,9 +11,11 @@ import { CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
 import { readUsage } from "./usage";
+import { reviewModel } from "./security-review";
+import { AppServer, listModels } from "./rpc";
 /** How often Buzz's copy of Codex looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
-export const inject = ["agents", "host"];
+export const inject = ["agents", "host", "agentProtection"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `codex`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
@@ -60,7 +62,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
           },
         }
       : undefined,
+    ctx.host,
+    (pubkey) => ctx.agents.handle(pubkey),
   );
+  ctx.agentProtection.registerModels({
+    label: "Codex",
+    models: async () => {
+      const rpc = new AppServer();
+      try {
+        await rpc.open(start);
+        return (await listModels(rpc)).map((model) => ({
+          id: model.model,
+          label: model.displayName,
+        }));
+      } finally {
+        await rpc.close();
+      }
+    },
+    complete: (model, prompt, signal) =>
+      reviewModel(start, model, prompt, signal),
+  });
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
   let needed: boolean | undefined;
@@ -69,9 +90,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const sync = () => {
     const snapshot = ctx.agents.snapshot();
     if (snapshot.status === "loading") return;
-    const running = snapshot.running.filter(
-      (agent) => agent.type === typeKey && !agent.protection,
-    );
+    const running = snapshot.running.filter((agent) => agent.type === typeKey);
     runtime.sync(running);
     // Once loaded, and when the first Codex agent runs, the copy is brought
     // up to date; that is also when a first copy is downloaded.
@@ -124,8 +143,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: TYPE_ID,
     hooks: { events: CODEX_HOOK_EVENTS },
     retire: (pubkey) => runtime.retire(pubkey),
-    protectionUnavailable:
-      "Codex does not offer fail-closed checks for every built-in tool. Protected execution is unavailable.",
+    protection: true,
     title: "Codex",
     icon: CodexLogoIcon,
     description:

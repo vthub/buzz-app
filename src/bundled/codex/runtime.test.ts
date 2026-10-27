@@ -457,6 +457,7 @@ function fixture(
     vi.stubGlobal("localStorage", local);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
+      agentProtection: { registerModels: vi.fn() },
       host: { spawn },
       agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),

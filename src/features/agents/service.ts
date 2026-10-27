@@ -1571,7 +1571,7 @@ export class AgentsService extends Service implements Agents {
       ctx,
       () => ({
         owner: this.bound.get(this.selectedOrigin() ?? "")?.binding?.viewer,
-        agents: this.state.agents,
+        agents: this.state.running,
         types: this.types(),
       }),
       {
@@ -1594,7 +1594,9 @@ export class AgentsService extends Service implements Agents {
           const setProtection = this.native?.setProtection?.bind(this.native);
           if (!setProtection)
             throw new Error("Native agent protection is unavailable");
-          const members = this.state.agents.filter((agent) => agent.pubkey === pubkey);
+          const members = this.identities.filter(
+            (agent) => agent.pubkey === pubkey && !agent.deleted,
+          );
           const agent = members[0];
           if (!agent) throw new Error("No such agent on this device");
           const type = this.types().find((type) => type.key === agent.type);
@@ -1807,7 +1809,9 @@ export class AgentsService extends Service implements Agents {
           try {
             return await native.claim(
               pubkey,
-              this.identities.find((agent) => agent.pubkey === pubkey && !agent.deleted)?.protectionRevision ?? 0,
+              this.identities.find(
+                (agent) => agent.pubkey === pubkey && !agent.deleted,
+              )?.protectionRevision ?? 0,
             );
           } catch (error) {
             void this.refresh().catch(() => undefined);
@@ -3154,7 +3158,12 @@ export class AgentsService extends Service implements Agents {
   sessionState(key: AgentKey, place: SessionPlace): SessionState {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
-    if (!agent || (agent.protection && type?.protection !== true) || !this.runners.runs(key) || this.runners.transitioning(key))
+    if (
+      !agent ||
+      (agent.protection && type?.protection !== true) ||
+      !this.runners.runs(key) ||
+      this.runners.transitioning(key)
+    )
       return "unavailable";
     return type?.sessionControls?.state(agent, place) ?? "unavailable";
   }

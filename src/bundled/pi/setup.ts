@@ -92,4 +92,26 @@ export class PiSetup {
   test(choice: Readonly<{ provider: string; model: string }>): Promise<Tested> {
     return this.pi.request<Tested>("test", choice);
   }
+  async review(
+    choice: { provider?: string; id: string },
+    prompt: string,
+    signal: AbortSignal,
+  ) {
+    signal.throwIfAborted();
+    const id = crypto.randomUUID();
+    const cancel = () => {
+      void this.pi.request("cancel-review", { id }).catch(() => undefined);
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      const result = await this.pi.request<{
+        text: string;
+        model: { provider: string; id: string };
+      }>("review", { ...choice, model: choice.id, prompt, id });
+      signal.throwIfAborted();
+      return result;
+    } finally {
+      signal.removeEventListener("abort", cancel);
+    }
+  }
 }

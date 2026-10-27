@@ -325,7 +325,8 @@ export class AcpProcess {
     if (!this.alive) return;
     this.notify("session/cancel", { sessionId: session.id });
     if (this.hooks.closeSession !== "always" && !this.advertises("close")) {
-      if (strict) throw new Error("The harness cannot acknowledge session retirement");
+      if (strict)
+        throw new Error("The harness cannot acknowledge session retirement");
       return;
     }
     await this.request(
