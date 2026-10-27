@@ -10,6 +10,9 @@ import { byteSize } from "./budget";
 import { ReadError } from "./errors";
 
 export type Priority = "foreground" | "background";
+/** The response was larger than the 8 MiB a read admits. Deterministic: a
+ * caller that can asks for less rather than again. */
+export const READ_BUDGET_EXCEEDED = "Relay response exceeds the read budget";
 export type ReadOptions = {
   signal?: AbortSignal;
   priority?: Priority;
@@ -182,10 +185,7 @@ export function createRelayReader(
         void query
           .then(async (events) => {
             if (byteSize(events) > 8 * 1024 * 1024)
-              throw new ReadError(
-                "invalid-response",
-                "Relay response exceeds the read budget",
-              );
+              throw new ReadError("invalid-response", READ_BUDGET_EXCEEDED);
             await verifyThreadWindows(
               job.filters,
               events,
