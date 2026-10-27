@@ -2,7 +2,7 @@ import { useState, useSyncExternalStore } from "react";
 import type { FederatedIdentity } from "./service";
 import { Button } from "../../shared/design-system/ui/Button";
 
-function recoveryMessage(code: string) {
+export function recoveryMessage(code: string) {
   if (code === "storage-busy")
     return "Secure storage is busy. Close another Buzz instance and try again.";
   if (code.startsWith("storage-"))

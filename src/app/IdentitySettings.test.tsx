@@ -7,6 +7,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import type { Identity } from "../features/identity/service";
 import { IdentitySettings } from "./IdentitySettings";
+import { federatedFixture } from "../features/federated-identity/testing";
 const viewer = "ab".repeat(32);
 afterEach(() => {
   cleanup();
@@ -106,4 +107,37 @@ it("clears a revealed key when leaving identity settings and starts masked on re
     "••••••••••••••••",
   );
   expect(exportKey).toHaveBeenCalledTimes(1);
+});
+
+it("shows the organization account and signs out of it once", async () => {
+  const h = federatedFixture();
+  h.publish({ status: "signed-in", email: "a@example.com" });
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  expect(screen.getByText("Signed in as a@example.com")).toBeVisible();
+  expect(screen.getByText(/builderlab\.example login/)).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Sign out of organization" }),
+  );
+  expect(h.service.signOut).toHaveBeenCalledTimes(1);
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
+it("signs in to the organization once when signed out", async () => {
+  const h = federatedFixture();
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(h.service.signIn).toHaveBeenCalledTimes(1);
+});
+
+it("hides organization sign-in without an authority", () => {
+  const h = federatedFixture();
+  h.publish({ status: "unconfigured", authority: null });
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  expect(screen.queryByText("Organization sign-in")).not.toBeInTheDocument();
 });

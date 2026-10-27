@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import type { Identity } from "../features/identity/service";
+import type { FederatedIdentity } from "../features/federated-identity/service";
+import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
 import { PrivateKey } from "../features/identity/PrivateKey";
 import { SignOutDialog } from "../features/identity/SignOut";
 import { Header } from "../shared/design-system/ui/Header";
@@ -16,9 +18,11 @@ import styles from "./IdentitySettings.module.css";
 export function IdentitySettings({
   viewer,
   identity,
+  federatedIdentity,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
+  federatedIdentity?: FederatedIdentity | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const [copyStatus, setCopyStatus] = useState<{
@@ -86,6 +90,9 @@ export function IdentitySettings({
               />
             ))}
           </SettingsGroup>
+          {federatedIdentity && (
+            <OrganizationSignIn identity={federatedIdentity} />
+          )}
           {identity && (
             <div className="mt-6">
               <SettingsGroup layout="form">
@@ -128,6 +135,76 @@ export function IdentitySettings({
           )}
         </>
       )}
+    </section>
+  );
+}
+
+function OrganizationSignIn({ identity }: { identity: FederatedIdentity }) {
+  const state = useSyncExternalStore(
+    identity.subscribe,
+    identity.snapshot,
+    identity.snapshot,
+  );
+  const [failure, setFailure] = useState("");
+  if (
+    !state.authority ||
+    state.status === "unconfigured" ||
+    state.status === "unavailable"
+  )
+    return null;
+  const organization = new URL(state.authority.identityOrigin).host;
+  const signedIn = state.status === "signed-in";
+  const signingIn = state.status === "signing-in";
+  function run(operation: () => Promise<unknown>) {
+    setFailure("");
+    void operation().catch((error: unknown) =>
+      setFailure(
+        error instanceof Error ? error.message : "Sign-in unavailable",
+      ),
+    );
+  }
+  const problem = failure || state.failure;
+  return (
+    <section className="mt-6" aria-labelledby="organization-sign-in-title">
+      <h3 id="organization-sign-in-title" className="text-body-lg">
+        Organization sign-in
+      </h3>
+      <SettingsGroup>
+        <PreferenceRow
+          title={
+            signedIn
+              ? `Signed in as ${state.email ?? "your organization account"}`
+              : "Not signed in"
+          }
+          subtitle={`Lets you and your agents into communities that require your ${organization} login. Signing out keeps your Buzz key on this device, but you and your agents can’t connect to those communities again until you sign back in.`}
+          trailing={
+            <Button
+              type="button"
+              disabled={state.status === "restoring"}
+              onClick={() =>
+                run(
+                  signedIn
+                    ? identity.signOut
+                    : signingIn
+                      ? identity.cancelSignIn
+                      : identity.signIn,
+                )
+              }
+            >
+              {signedIn
+                ? "Sign out of organization"
+                : signingIn
+                  ? "Cancel sign-in"
+                  : "Sign in"}
+            </Button>
+          }
+        />
+        {problem && (
+          <p role="alert" className="text-body-sm text-danger">
+            {recoveryMessage(problem)}
+          </p>
+        )}
+      </SettingsGroup>
     </section>
   );
 }

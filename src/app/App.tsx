@@ -500,6 +500,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                   adminAccess={services.adminAccess}
                   communities={services.communities}
                   identity={services.identity}
+                  federatedIdentity={services.federatedIdentity}
                   appearance={services.appearance}
                   shortcuts={services.shortcuts}
                   shortcutBindings={services.shortcutBindings}
