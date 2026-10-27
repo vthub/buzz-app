@@ -951,10 +951,13 @@ it("selects the exact match on Space from a publication React has not rendered y
 
 /** The real `@` syntax with a provider that answers each query from its mount
  * effect, as the bundled providers do: one row named by the query, the exact
- * name decided on Space, and a settled empty result once a Space is typed. */
-function mountTypeahead() {
+ * name decided on Space, and a settled empty result once a Space is typed.
+ * `mounted` runs in that effect before the publication, after the host has
+ * committed what it shows for the query on its own. */
+function mountTypeahead(mounted?: (query: string) => void) {
   function Completion({ query, publish }: ComposerCompletionProps) {
     useEffect(() => {
+      mounted?.(query.query);
       const withdraw = publish(
         query.query.includes(" ")
           ? { items: [] }
@@ -1020,13 +1023,24 @@ it("keeps the popup up through each keystroke that continues an open @ query", a
   const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
   const previous = env.IS_REACT_ACT_ENVIRONMENT;
   // Each delivery of DOM changes is a point at which the browser may paint.
-  const deliveries: (string[] | null)[] = [];
-  const observer = new MutationObserver(() => deliveries.push(h.rows()));
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-  });
+  // The per-query owner remounts on every keystroke, so its popup section is
+  // a new node each time; a delivery whose records removed a section without
+  // adding its replacement left the popup absent at a paint opportunity.
+  const popup = 'section[aria-label$=" suggestions"]';
+  const holds = (nodes: NodeList) =>
+    [...nodes].some(
+      (node) =>
+        node instanceof Element &&
+        (node.matches(popup) || !!node.querySelector(popup)),
+    );
+  const deliveries: { removed: boolean; added: boolean }[] = [];
+  const observer = new MutationObserver((records) =>
+    deliveries.push({
+      removed: records.some((record) => holds(record.removedNodes)),
+      added: records.some((record) => holds(record.addedNodes)),
+    }),
+  );
+  observer.observe(document.body, { childList: true, subtree: true });
   try {
     env.IS_REACT_ACT_ENVIRONMENT = false;
     for (const text of ["@ho", "@hon", "@hone", "@honey"]) {
@@ -1053,9 +1067,37 @@ it("keeps the popup up through each keystroke that continues an open @ query", a
     observer.disconnect();
     await act(async () => {});
   }
-  expect(deliveries.length).toBeGreaterThanOrEqual(4);
-  expect(deliveries).not.toContain(null);
-  expect(deliveries.at(-1)).toEqual(["Honey honey"]);
+  expect(deliveries.filter(({ removed, added }) => removed && !added)).toEqual(
+    [],
+  );
+  expect(deliveries.filter(({ removed }) => removed)).toHaveLength(4);
+  expect(h.rows()).toEqual(["Honey honey"]);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("reopens a query at the same offset after Escape with no carried rows", () => {
+  // What the host showed for each query before its provider published, once
+  // per query: StrictMode runs the provider's mount effect twice.
+  const shown: [string, string[] | null][] = [];
+  const h = mountTypeahead((query) => {
+    if (shown.at(-1)?.[0] !== query) shown.push([query, h.rows()]);
+  });
+  const input = h.input();
+  input.focus();
+  h.fill("@hon");
+  h.fill("@hone");
+  expect(h.rows()).toEqual(["Honey hone"]);
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(h.rows()).toBeNull();
+  h.fill("@honey");
+  expect(h.rows()).toEqual(["Honey honey"]);
+  expect(shown).toEqual([
+    ["hon", null],
+    // A continuing keystroke carries the previous query's rows.
+    ["hone", ["Honey hon"]],
+    // A query reopened after the popup closed starts empty, as a first one.
+    ["honey", null],
+  ]);
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 

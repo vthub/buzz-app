@@ -42,7 +42,9 @@ const RETRY = Symbol("retry-completion");
  * now shows the previous query's result until its own first publication
  * replaces it in the same task: a store update renders synchronously, and an
  * owner whose provider has not published by the end of its mount effects
- * clears it. A query opened elsewhere, or by another provider, starts empty. */
+ * clears it. A query opened elsewhere, by another provider, or after the
+ * popup closed starts empty: `ComposerCompletions` evicts the store in its
+ * closed render, so a carried result means only a continuing open query. */
 function createDisplay() {
   let shown: { key: string; result: CompletionResult | undefined } = {
     key: "",
@@ -146,12 +148,23 @@ export function ComposerCompletions({
       ...resolved.recipients,
       ...(resolved.pending ?? []),
     ]);
-  if (!match || !observation) return null;
-  if (
-    match.provider.pluginId === "buzz.channels" &&
-    !channelCompletionInProse(observation.text, resolved.document, match.query)
-  )
-    return null;
+  const open =
+    !!match &&
+    !!observation &&
+    (match.provider.pluginId !== "buzz.channels" ||
+      channelCompletionInProse(
+        observation.text,
+        resolved.document,
+        match.query,
+      ));
+  // A closed popup carries nothing on. A query reopened at the same trigger,
+  // after Escape, Backspace through its `@`, a send or a pending-mention hold
+  // that returned to text, starts empty as a first query does; its provider's
+  // first publication fills it in the same task.
+  useEffect(() => {
+    if (!open) display.set("", undefined);
+  }, [open, display]);
+  if (!open || !match || !observation) return null;
   return (
     <ContributionBoundary
       key={JSON.stringify([
