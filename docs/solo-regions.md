@@ -36,6 +36,13 @@ and `-end` for row geometry. Other host classes and module class names are
 private. Conversations are not drag sources and cannot file into personal
 workspaces.
 
+`data-solo-destination-id` is a supported behavior hook. A primary
+`Conversation.Link` carries its channel ID; secondary links omit the marker.
+Recovery destinations use the same marker. Nexus uses it to identify dragged
+tasks and restore focus after a move. Plugins must scope queries to their own
+region. Changes to the marker or its meaning require coordinated updates to the
+host and consuming plugins.
+
 The host retains one JSON state value per scope, viewer, and source key across
 unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stale
 write returns false and does not update the memory value. Sources must keep their
