@@ -64,9 +64,12 @@ describe("GitHub author policy", () => {
     expect(() =>
       savePolicy(policy({ trustedOrganizations: ["bot[bot]"] })),
     ).toThrow("not a GitHub organization login");
-    const saved = policy({ trustedAuthors: ["wes"] });
+    const saved = policy({
+      trustedAuthors: ["wes", "ada_block", "Dependabot[BOT]"],
+    });
     savePolicy(saved);
     expect(loadPolicy()).toEqual(saved);
+    expect(admit(by("dependabot", true), saved, "john", nobody)).toBe(true);
     localStorage.setItem(POLICY_KEY, '{"version":1,"trustedAuthors":"wes"}');
     expect(loadPolicy()).toEqual(policy());
   });

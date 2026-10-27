@@ -16,7 +16,7 @@ const FIELDS: [keyof Lists, string, string][] = [
   [
     "trustedOrganizations",
     "Trusted organizations",
-    "One GitHub organization login per line. Their members' comments wake your agents.",
+    "One GitHub organization login per line. Members whose membership your GitHub account can see wake your agents; a misspelled organization matches nobody.",
   ],
   [
     "trustedAuthors",
@@ -65,7 +65,13 @@ export function AuthorSettings({ active }: { active(): boolean }) {
           if (!active() || !dirty) return;
           const invalid = validate(policy);
           if (invalid) return setError(invalid);
-          savePolicy(policy);
+          try {
+            savePolicy(policy);
+          } catch (reason) {
+            return setError(
+              reason instanceof Error ? reason.message : String(reason),
+            );
+          }
           setSaved(policy);
           setDraft(text(policy));
           setError("");

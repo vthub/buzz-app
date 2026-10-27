@@ -27,9 +27,12 @@ const STORAGE_KEY = "buzz.github.pull-watches.v1";
 const FAILURE_LIMIT = 30;
 /** How long an organization membership answer is kept. */
 const MEMBERSHIP_MS = 60 * 60_000;
-/** Authors one membership read asks about, keeping it under the `pull`
- * command's input limit. */
-const MEMBERSHIP_READ = 10;
+/** The `pull` command's input limit, in bytes, which a membership read keeps
+ * under. */
+const INPUT_BYTES = 4096;
+/** Polls in a row a login's own membership read may fail before it is taken
+ * to be in no trusted organization, as one GitHub has no user for is. */
+const LOOKUP_FAILURES = 10;
 
 const keyOf = (watch: Pick<Watch, "agent" | "url">) =>
   `${watch.agent} ${watch.url}`;
@@ -103,6 +106,8 @@ export function watchPulls(ctx: Context) {
   let disposed = false;
   /** Membership answers by organizations and login. */
   const members = new Map<string, { member: boolean; at: number }>();
+  /** Failed reads of a login's membership, by the same key. */
+  const misses = new Map<string, number>();
   const memberKey = (policy: AuthorPolicy, login: string) =>
     `${policy.trustedOrganizations.join(" ").toLowerCase()} ${login.toLowerCase()}`;
   /** Looks up the trusted-organization membership `feedback` needs, keeping
@@ -123,16 +128,45 @@ export function watchPulls(ctx: Context) {
       const known = members.get(memberKey(policy, login));
       return !known || now - known.at >= MEMBERSHIP_MS;
     });
-    for (let start = 0; start < logins.length; start += MEMBERSHIP_READ) {
-      const batch = logins.slice(start, start + MEMBERSHIP_READ);
+    const ask = async (batch: string[]) => {
       const output = await ctx.host.runCommand(
         "pull",
         membershipRequest(batch, policy.trustedOrganizations),
       );
       const found =
         output === null ? undefined : parseMembership(output, batch);
-      for (const [login, member] of found ?? [])
+      for (const [login, member] of found ?? []) {
         members.set(memberKey(policy, login), { member, at: now });
+        misses.delete(memberKey(policy, login));
+      }
+      return !!found;
+    };
+    const size = (batch: string[]) =>
+      new TextEncoder().encode(
+        membershipRequest(batch, policy.trustedOrganizations),
+      ).length;
+    // Batches as large as the input limit allows.
+    const batches: string[][] = [];
+    for (const login of logins) {
+      const last = batches.at(-1);
+      if (last && size([...last, login]) <= INPUT_BYTES) last.push(login);
+      else batches.push([login]);
+    }
+    for (const batch of batches) {
+      // One login GitHub cannot answer for fails its whole batch, so each
+      // is then asked alone.
+      if (await ask(batch)) continue;
+      if (batch.length > 1) for (const login of batch) await ask([login]);
+      for (const login of batch) {
+        const key = memberKey(policy, login);
+        if (members.get(key)?.at === now) continue;
+        const missed = (misses.get(key) ?? 0) + 1;
+        misses.set(key, missed);
+        if (missed >= LOOKUP_FAILURES) {
+          members.set(key, { member: false, at: now });
+          misses.delete(key);
+        }
+      }
     }
   };
   /** The pull request at `url`, with the text of feedback not in `seen`. */

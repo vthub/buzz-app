@@ -127,7 +127,9 @@ saved on the device. Ignored logins never wake an agent. Until a trusted
 organization or login is saved, everyone else does; after, only trusted logins,
 members of a trusted organization and the signed-in account do. Membership is
 read through `gh` and kept for an hour; feedback whose author's membership
-cannot be read waits for a later poll. Each poll reads the settings again, so a
+cannot be read waits for a later poll, until ten polls in a row fail for that
+login alone and it counts as no member. A membership hidden from the `gh`
+account, or a misspelled organization, counts as none. Each poll reads the settings again, so a
 change applies to running watches. CI and pull request state are not limited.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message

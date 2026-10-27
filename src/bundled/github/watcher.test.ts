@@ -102,6 +102,8 @@ function respond(pull: Pull, input: string) {
 function membership(members: readonly string[], input: string) {
   const { query } = JSON.parse(input) as { query: string };
   const users = [...query.matchAll(/(u\d+):user\(login:"([^"]+)"\)/g)];
+  // GitHub has no user for a mannequin, which fails the whole read.
+  if (users.some(([, , login]) => login === "mannequin")) return null;
   return JSON.stringify({
     data: Object.fromEntries(
       users.map(([, alias, login]) => [
@@ -762,6 +764,84 @@ describe("github_watch_pr", () => {
     expect(app.texts()).toHaveLength(2);
     expect(app.texts()[1]).toContain("body-alice");
     expect(app.texts().join("\n")).not.toContain("body-stranger");
+    app.dispose();
+  });
+
+  it("keeps membership reads under the command's input limit", async () => {
+    const organizations = Array.from(
+      { length: 8 },
+      (_, index) => `organization-${index}-with-a-long-name`,
+    );
+    const logins = Array.from(
+      { length: 30 },
+      (_, index) => `commenter-${index}-with-a-long-login`,
+    );
+    localStorage.setItem(
+      POLICY_KEY,
+      JSON.stringify({
+        version: 1,
+        trustedOrganizations: organizations,
+        trustedAuthors: [],
+        ignoredAuthors: [],
+      }),
+    );
+    const app = setup();
+    await app.call({ url });
+    app.members(logins);
+    app.gh(
+      answer({
+        comments: logins.map((login, index) => ({
+          id: `I${index}`,
+          login,
+          body: `body-${index}`,
+        })),
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    const reads = app.runCommand.mock.calls
+      .map(([, input]) => input as string)
+      .filter((input) => !("variables" in JSON.parse(input)));
+    expect(reads.length).toBeGreaterThan(1);
+    for (const input of reads)
+      expect(new TextEncoder().encode(input).length).toBeLessThanOrEqual(4096);
+    expect(app.texts()[0]).toContain("30 new comments");
+    app.dispose();
+  });
+
+  it("asks alone after a login fails its batch, and gives up on that login", async () => {
+    localStorage.setItem(
+      POLICY_KEY,
+      JSON.stringify({
+        version: 1,
+        trustedOrganizations: ["block"],
+        trustedAuthors: [],
+        ignoredAuthors: [],
+      }),
+    );
+    const app = setup();
+    await app.call({ url });
+    app.members(["alice"]);
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "mannequin", body: "body-mannequin" },
+          { id: "I2", login: "alice", body: "body-alice" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-alice");
+    // After ten polls it is taken to be in no organization, and is seen.
+    const asked = () =>
+      app.runCommand.mock.calls.filter(([, input]) =>
+        (input as string).includes('"mannequin"'),
+      ).length;
+    await vi.advanceTimersByTimeAsync(12 * POLL_MS);
+    const settled = asked();
+    await vi.advanceTimersByTimeAsync(3 * POLL_MS);
+    expect(asked()).toBe(settled);
+    expect(app.texts().join("\n")).not.toContain("body-mannequin");
     app.dispose();
   });
 

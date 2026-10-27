@@ -22,7 +22,8 @@ const EMPTY: AuthorPolicy = {
   ignoredAuthors: [],
 };
 const ORGANIZATION = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?$/;
+// Enterprise Managed Users' logins end in `_shortcode`.
+const LOGIN = /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\[bot\])?$/i;
 
 /** `policy`, or why it is not one. */
 export function validate(policy: AuthorPolicy): string | undefined {
@@ -113,7 +114,8 @@ export function admit(
 }
 
 /** The `gh api graphql --input -` body asking which of `organizations` each of
- * `logins` belongs to. Both are validated logins, so they are safe to inline. */
+ * `logins` belongs to. Each is inlined as a JSON string, so it stays a
+ * string; organizations are validated logins, commenters' come from GitHub. */
 export function membershipRequest(
   logins: readonly string[],
   organizations: readonly string[],
