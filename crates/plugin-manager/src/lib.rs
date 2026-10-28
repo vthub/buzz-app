@@ -225,22 +225,26 @@ pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+/// Every Builderlab login origin the bundled plugin may reach: `BUILDERLAB_ORIGIN`
+/// and each distinct `BUZZ_BUILDERLAB_TENANTS` login origin, as build.rs joined them.
+pub fn builderlab_origins() -> Vec<String> {
+    env!("BUZZ_BUILDERLAB_ORIGINS")
+        .split(',')
+        .filter(|origin| !origin.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
     ))
     .expect("builderlab manifest");
-    let origin = BUILDERLAB_ORIGIN;
     builderlab.host = Some(HostGrants {
-        files: apps_control_plane(origin).is_some(),
-        network_origins: if origin.is_empty() {
-            vec![]
-        } else {
-            std::iter::once(origin)
-                .chain(apps_control_plane(origin))
-                .map(Into::into)
-                .collect()
-        },
+        files: apps_control_plane(BUILDERLAB_ORIGIN).is_some(),
+        network_origins: builderlab_origins()
+            .into_iter()
+            .chain(apps_control_plane(BUILDERLAB_ORIGIN).map(Into::into))
+            .collect(),
         ..HostGrants::default()
     });
     vec![
@@ -2015,15 +2019,15 @@ mod tests {
         );
         assert_eq!(
             grants.network_origins,
-            if env!("BUZZ_BUILDERLAB_ORIGIN").is_empty() {
-                vec![]
-            } else {
-                std::iter::once(env!("BUZZ_BUILDERLAB_ORIGIN"))
-                    .chain(super::apps_control_plane(env!("BUZZ_BUILDERLAB_ORIGIN")))
-                    .map(str::to_owned)
-                    .collect()
-            }
+            super::builderlab_origins()
+                .into_iter()
+                .chain(super::apps_control_plane(super::BUILDERLAB_ORIGIN).map(str::to_owned))
+                .collect::<Vec<_>>()
         );
+        // The build URL's origin, when configured, is always granted first.
+        if !super::BUILDERLAB_ORIGIN.is_empty() {
+            assert_eq!(grants.network_origins[0], super::BUILDERLAB_ORIGIN);
+        }
         assert!(grants.commands.is_empty());
         assert!(manager
             .host_grants("block.builderlab", "wrong-revision")

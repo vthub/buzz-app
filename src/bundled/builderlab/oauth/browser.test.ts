@@ -337,6 +337,24 @@ it.each([
   expect(() => oauthTarget(value)).toThrow("does not support");
 });
 
+it("signs in at an explicit tenant origin for the whole round-trip, under the same rules", async () => {
+  const origin = "https://tenant.example";
+  const { host, bridge, controller } = fixture();
+  await browserCredential(host, controller.signal, bridge, origin);
+  const options = vi.mocked(bridge.begin).mock.calls[0]?.[0];
+  expect(options?.authorizationUrl).toMatch(
+    /^https:\/\/tenant\.example\/api\/goose\/v1\/auth\/login\?type=cli&product=builderlab&/,
+  );
+  expect(vi.mocked(host.request).mock.calls.map(([{ url }]) => url)).toEqual([
+    `${origin}/api/goose/v1/auth/login/exchange`,
+    `${origin}/api/goose/v1/auth/me`,
+  ]);
+  await expect(
+    browserCredential(host, controller.signal, bridge, "http://tenant.example"),
+  ).rejects.toThrow("does not support");
+  expect(bridge.begin).toHaveBeenCalledTimes(1);
+});
+
 it.each([
   [
     ["error", "access_denied"],

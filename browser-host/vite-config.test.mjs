@@ -154,6 +154,21 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
               assert.equal(result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'], JSON.stringify(expected));
             }
+            // The tenant table is passed through verbatim once it parses, and
+            // a malformed table fails at configuration time without being echoed.
+            const tenants = '[{"relayHost":"communities.buzz.xyz","loginOrigin":"https://app.builderlab.xyz"}]';
+            writeFileSync('.env.local', "BUZZ_BUILDERLAB_TENANTS='" + tenants + "'");
+            delete process.env.BUZZ_BUILDERLAB_TENANTS;
+            const tenantTable = await loadConfigFromFile(
+              { command: 'build', mode: 'production' }, configFile,
+            );
+            assert.equal(tenantTable.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_TENANTS'], JSON.stringify(tenants));
+            process.env.BUZZ_BUILDERLAB_TENANTS = '[{"relayHost":"a.example","loginOrigin":"http://secret.example"}]';
+            await assert.rejects(
+              loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),
+              (error) => /BUZZ_BUILDERLAB_TENANTS must be/.test(error.message) && !error.message.includes('secret'),
+            );
+            process.env.BUZZ_BUILDERLAB_TENANTS = '';
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';
@@ -186,6 +201,7 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
         BUZZ_DEV_VIEWER: "a".repeat(64),
         BUZZ_RELAY_URL: "",
         BUZZ_COMMUNITY_ALIASES: "",
+        BUZZ_BUILDERLAB_TENANTS: "",
         VITE_CONFIG_NATIVE_IGNORE_WARNING: "",
       },
       encoding: "utf8",

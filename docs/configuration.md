@@ -9,6 +9,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_BUILDERLAB_TENANTS` | Shared frontend/native build: which relays each Builderlab deployment hosts and its login origin, for the first-launch community URL; every login origin joins the bundled plugin's host grant. No runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
@@ -95,6 +96,45 @@ grant rebuild together; browser-only development needs a Vite restart. Productio
 web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
+
+## Builderlab tenant table build input
+
+`BUZZ_BUILDERLAB_TENANTS` tells the first-launch screen which Builderlab
+deployment, if any, hosts a community URL the person types, so sign-in can go to
+that deployment's portal ([identity](identity.md)). It is read exactly like
+`BUZZ_BUILDERLAB_URL`: Vite exposes it as `VITE_BUZZ_BUILDERLAB_TENANTS`, and the
+native plugin-manager build reads the same `.env.local`/process value. Set both
+inputs in the same place; the repository supplies no deployment table.
+
+The value is a JSON array of rows, each `{"relayHost", "self"?, "loginOrigin"}`:
+
+```sh
+BUZZ_BUILDERLAB_TENANTS='[{"relayHost":"communities.buzz.xyz","self":"12f6870117eff1a6318bd38c82a65d51dd19879b7489f57247114d0ee8a96de3","loginOrigin":"https://app.builderlab.xyz"},{"relayHost":"block.builderlab.xyz","self":"76aa9daa7edc9c2e1dc6a2a90dbce10c1bd52f060fa6506ba7bad4f50240fc01","loginOrigin":"https://block.builderlab.xyz"},{"relayHost":"test.blockstaging.build","self":"f7f4df9401ecf46cc608b0889a61d957b306721cdefe42cb24519cb5a473dcf1","loginOrigin":"https://test.blockstaging.build"}]'
+```
+
+- `relayHost`: a lowercase hostname (no scheme, port, path or wildcard). A
+  community URL matches it exactly or as a suffix at a label boundary, so
+  `block.builderlab.xyz` covers `buzz.block.builderlab.xyz` and
+  `acme.communities.block.builderlab.xyz` but not `notblock.builderlab.xyz`.
+  Only the default port matches. Rows must not repeat a host; the longest
+  matching host wins.
+- `self` (optional): the deployment's relay key as NIP-11 `self` publishes it,
+  64 lowercase hex. When no host matches, a relay publishing a listed key still
+  matches its row, so a known deployment survives a DNS move; it can only select
+  a login origin already in the table.
+- `loginOrigin`: the deployment's portal, written exactly as its canonical
+  `https://` origin (no credentials, port `443` omitted, no path, query or
+  fragment). The native build grants every distinct `loginOrigin`, together with
+  `BUZZ_BUILDERLAB_URL`'s origin, to the bundled Builderlab plugin, up to 15
+  login origins (the manifest limit of 16 keeps one for that origin's Apps
+  Platform); the first-launch OAuth client can reach nothing else. The native
+  kind-24243 binding signer accepts a challenge for these origins and production
+  Builderlab only.
+
+A community URL that matches no row chooses no portal: the welcome screen asks
+whether to connect with Builderlab at `BUZZ_BUILDERLAB_URL` or bring an existing key.
+Malformed rows fail the Vite configuration and the native build without echoing
+the value. The same restart and rebuild rules as `BUZZ_BUILDERLAB_URL` apply.
 
 ## Whole-video limit
 

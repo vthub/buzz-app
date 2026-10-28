@@ -474,29 +474,34 @@ mod tests {
                 archive
             );
         }
-        let origin = grants
-            .network_origins
-            .first()
-            .map(String::as_str)
-            .unwrap_or("https://app.builderlab.xyz");
-        let (url, _, _) = validate_request(&request(&format!(
-            "{origin}/api/goose/v1/auth/login/exchange"
-        )))
-        .unwrap();
-        assert_eq!(
-            allows_origin(&grants, &url),
-            !grants.network_origins.is_empty()
-        );
-        let mut other = url;
-        other
-            .set_port(Some(if other.port() == Some(8443) {
-                9443
-            } else {
-                8443
-            }))
+        // The build URL, every tenant login origin and the Apps control plane are
+        // granted exactly; an unconfigured build grants nothing, not even
+        // production Builderlab.
+        let origins: Vec<&str> = if grants.network_origins.is_empty() {
+            vec!["https://app.builderlab.xyz"]
+        } else {
+            grants.network_origins.iter().map(String::as_str).collect()
+        };
+        for origin in origins {
+            let (url, _, _) = validate_request(&request(&format!(
+                "{origin}/api/goose/v1/auth/login/exchange"
+            )))
             .unwrap();
-        let (url, _, _) = validate_request(&request(other.as_str())).unwrap();
-        assert!(!allows_origin(&grants, &url));
+            assert_eq!(
+                allows_origin(&grants, &url),
+                !grants.network_origins.is_empty()
+            );
+            let mut other = url;
+            other
+                .set_port(Some(if other.port() == Some(8443) {
+                    9443
+                } else {
+                    8443
+                }))
+                .unwrap();
+            let (url, _, _) = validate_request(&request(other.as_str())).unwrap();
+            assert!(!allows_origin(&grants, &url));
+        }
     }
 
     #[test]

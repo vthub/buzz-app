@@ -62,7 +62,8 @@ Beekeeper accepts an owner proof only from the Buzz key bound to the signed-in
 Builderlab account. After sign-in, and again before each activation, the plugin
 checks `/v1/buzz/nostr-identities/current` and binds an unbound account to this
 device's key through the native kind 24243 signer, which accepts only
-production Builderlab or this build's `BUZZ_BUILDERLAB_URL` origin. An account
+production Builderlab or a login origin this build grants the plugin
+(`BUZZ_BUILDERLAB_URL`'s and each tenant's). An account
 bound to another key is reported and never unbound.
 The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
@@ -135,7 +136,9 @@ agents are not migrated into this type.
   [communities](../../../docs/communities.md#known-communities).
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
-as its server address and appends `/api/goose`.
+as its server address and appends `/api/goose`. Its bundled native grant also
+covers every `loginOrigin` in the `BUZZ_BUILDERLAB_TENANTS` table, which only
+the first-launch sign-in uses.
 
 On desktop, the plugin supplies `/v1/auth/login` with `type=cli` and
 `product=builderlab` to the shared native

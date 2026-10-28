@@ -6,6 +6,7 @@ import {
   parseCommunityAliases,
   relayOrigin,
 } from "./src/features/communities/destination.ts";
+import { parseBuilderlabTenants } from "./src/features/identity/builderlab-tenants.ts";
 
 export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
@@ -15,6 +16,9 @@ export default defineConfig(async ({ command, mode }) => {
   const live = command === "serve" && Boolean(env.BUZZ_DEV_VIEWER?.trim());
   const aliases = env.BUZZ_COMMUNITY_ALIASES ?? "";
   parseCommunityAliases(aliases);
+  // Public too: the same table the native build grants to the Builderlab plugin.
+  const tenants = env.BUZZ_BUILDERLAB_TENANTS ?? "";
+  parseBuilderlabTenants(tenants);
   // Public routing configuration only; the viewer pin and credentials stay in Node.
   const defaultRelay = env.BUZZ_RELAY_URL?.trim();
   const defaultOrigin = defaultRelay ? relayOrigin(defaultRelay) : "";
@@ -88,6 +92,7 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
         env.BUZZ_BUILDERLAB_URL ?? "",
       ),
+      "import.meta.env.VITE_BUZZ_BUILDERLAB_TENANTS": JSON.stringify(tenants),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
         JSON.stringify(databricksHost),

@@ -405,7 +405,7 @@ fn parse_challenge(value: serde_json::Value) -> BuilderlabChallenge {
 #[test]
 fn builderlab_binding_signs_the_reference_kind_24243_shape() {
     let template = parse_challenge(builderlab_challenge())
-        .template(1_700_000_000, "")
+        .template(1_700_000_000, &[])
         .unwrap();
     let event: Event = serde_json::from_value(fixture().sign(template).unwrap()).unwrap();
     event.verify().unwrap();
@@ -448,7 +448,7 @@ fn builderlab_binding_rejects_invalid_or_foreign_challenges() {
         challenge[field] = value.into();
         assert_eq!(
             parse_challenge(challenge)
-                .template(now, "")
+                .template(now, &[])
                 .err()
                 .as_deref(),
             Some("Invalid Nostr identity challenge"),
@@ -461,7 +461,7 @@ fn builderlab_binding_rejects_invalid_or_foreign_challenges() {
 }
 
 #[test]
-fn builderlab_binding_accepts_only_production_or_the_configured_origin() {
+fn builderlab_binding_accepts_only_production_or_a_granted_origin() {
     let now = 1_700_000_000;
     let staging = "https://test.blockstaging.build";
     let with_origin = |origin: &str| {
@@ -469,27 +469,33 @@ fn builderlab_binding_accepts_only_production_or_the_configured_origin() {
         challenge["origin"] = origin.into();
         parse_challenge(challenge)
     };
-    let template = with_origin(staging).template(now, staging).unwrap();
-    assert!(template
-        .tags
-        .contains(&vec!["origin".to_owned(), staging.to_owned()]));
-    assert!(with_origin("https://app.builderlab.xyz")
-        .template(now, staging)
-        .is_ok());
-    for (origin, configured) in [
-        (staging, ""),
-        ("https://example.com", staging),
-        ("https://test.blockstaging.build/", staging),
-        ("https://test.blockstaging.build:8443", staging),
-        ("", ""),
+    let tenant = "https://block.builderlab.xyz";
+    let granted = [staging.to_owned(), tenant.to_owned()];
+    // The build URL's origin and every tenant login origin sign alike.
+    for origin in [staging, tenant] {
+        let template = with_origin(origin).template(now, &granted).unwrap();
+        assert!(template
+            .tags
+            .contains(&vec!["origin".to_owned(), origin.to_owned()]));
+    }
+    for list in [&granted[..], &[]] {
+        assert!(with_origin("https://app.builderlab.xyz")
+            .template(now, list)
+            .is_ok());
+    }
+    for (origin, list) in [
+        (staging, &[][..]),
+        (tenant, &granted[..1]),
+        ("https://example.com", &granted[..]),
+        ("https://test.blockstaging.build/", &granted[..]),
+        ("https://test.blockstaging.build:8443", &granted[..]),
+        ("https://Block.builderlab.xyz", &granted[..]),
+        ("", &granted[..]),
     ] {
         assert_eq!(
-            with_origin(origin)
-                .template(now, configured)
-                .err()
-                .as_deref(),
+            with_origin(origin).template(now, list).err().as_deref(),
             Some("Invalid Nostr identity challenge"),
-            "{origin} with {configured:?}"
+            "{origin} with {list:?}"
         );
     }
 }
@@ -519,13 +525,25 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
             },
         )
     };
-    let event: Event = invoke(builderlab_challenge())
-        .unwrap()
-        .deserialize()
-        .unwrap();
-    event.verify().unwrap();
-    assert_eq!(event.kind.as_u16(), 24243);
-    assert_eq!(event.pubkey.to_hex(), fixture().viewer().unwrap());
+    // Production, and every login origin this build grants the bundled plugin.
+    let granted = buzzodz_plugins::builderlab_origins();
+    for origin in
+        std::iter::once("https://app.builderlab.xyz").chain(granted.iter().map(String::as_str))
+    {
+        let mut challenge = builderlab_challenge();
+        challenge["origin"] = origin.into();
+        let event: Event = invoke(challenge)
+            .unwrap_or_else(|_| panic!("{origin} was refused"))
+            .deserialize()
+            .unwrap();
+        event.verify().unwrap();
+        assert_eq!(event.kind.as_u16(), 24243);
+        assert_eq!(event.pubkey.to_hex(), fixture().viewer().unwrap());
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| tag.clone().to_vec() == ["origin", origin]));
+    }
     let mut foreign = builderlab_challenge();
     foreign["origin"] = "https://example.com".into();
     assert!(invoke(foreign).is_err());

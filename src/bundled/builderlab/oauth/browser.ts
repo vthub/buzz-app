@@ -49,7 +49,7 @@ export type BrowserBridge = {
   wait(id: string): Promise<OAuthCallback>;
   cancel(id: string): Promise<void>;
 };
-const nativeBridge: BrowserBridge = {
+export const nativeBridge: BrowserBridge = {
   begin: (options) => invoke("oauth_callback_begin", options),
   wait: (id) => invoke("oauth_callback_wait", { id }),
   cancel: (id) => invoke("oauth_callback_cancel", { id }),
@@ -62,14 +62,19 @@ function base64url(bytes: Uint8Array) {
     .replace(/=+$/, "");
 }
 
-/** Acquire and verify a credential. No UI, storage, or authenticated API consumers. */
+/**
+ * Acquire and verify a credential. No UI, storage, or authenticated API consumers.
+ * `origin` selects another Builderlab deployment's https origin (a tenant's
+ * portal) for the whole round-trip; the configured build URL is the default.
+ */
 export async function browserCredential(
   host: Host,
   signal: AbortSignal,
   bridge: BrowserBridge = nativeBridge,
+  origin?: string,
 ): Promise<Credential> {
   signal.throwIfAborted();
-  const target = oauthTarget();
+  const target = oauthTarget(origin);
   let id: string | undefined;
   const path = `/callback/${crypto.randomUUID()}`;
   const login = new URL(`${target}/v1/auth/login`);
