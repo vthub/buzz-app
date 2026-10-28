@@ -51,6 +51,7 @@ it("shares a Claude agent's model as the claude runtime and imports it back", ()
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   let type: AgentType | undefined;
   apply({
+    agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { request: vi.fn() },
     agents: {

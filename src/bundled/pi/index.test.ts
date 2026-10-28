@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 it("shares a Pi agent's provider and model as the pi runtime and imports them back", () => {
   let type: AgentType | undefined;
   apply({
+    agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.pi", revision: "r1" },
     host: { request: vi.fn() },
     agents: {

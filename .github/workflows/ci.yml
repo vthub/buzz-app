@@ -71,7 +71,7 @@ jobs:
         env:
           PI_DEPS: ${{ github.workspace }}/src/bundled/pi/deps
         run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/protection/vitest.json evidence=test-results/protection/timing.json title="Protected Pi" -- ./bin/pnpm exec vitest run src/bundled/pi/protection.live.test.ts --reporter=default --reporter=json --outputFile=test-results/protection/vitest.json
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: agent-protection
           save-if: ${{ github.event_name == 'push' }}
@@ -126,7 +126,7 @@ jobs:
           sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y dbus-daemon libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native
           save-if: ${{ github.event_name == 'push' }}
@@ -164,7 +164,7 @@ jobs:
           rustup toolchain install $version --profile minimal --component clippy
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "RUSTUP_TOOLCHAIN=$version" >> $env:GITHUB_ENV
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: windows-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -238,7 +238,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: browser-fixture
           save-if: ${{ github.event_name == 'push' }}
