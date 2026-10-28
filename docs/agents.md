@@ -57,7 +57,7 @@ servers do not support these operations.
 
 ## Agent Attention
 
-The Agent Attention tab groups the selected community's local agents' subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed.
+The Watching page, below Inbox in the sidebar, groups the selected community's local agents' subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed.
 
 ## Agent types and providers
 

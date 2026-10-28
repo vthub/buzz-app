@@ -104,13 +104,13 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const attention = services.pages
       .snapshot()
       .find((page) => page.key === "buzz.agents/attention");
-    assert.equal(attention.title, "Agent Attention");
+    assert.equal(attention.title, "Watching");
     assert.equal(attention.layout, "workspace");
-    assert.equal(attention.placement, "topbar");
+    assert.equal(attention.placement, undefined);
     assert.equal(attention.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(attention.component)),
-      /Agent Attention/,
+      /What your agents are watching/,
     );
     const inbox = services.pages
       .snapshot()

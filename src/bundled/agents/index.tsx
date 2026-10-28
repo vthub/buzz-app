@@ -22,8 +22,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;
   ctx.pages.register({
     id: "attention",
-    title: "Agent Attention",
-    placement: "topbar",
+    title: "Watching",
     layout: "workspace",
     primary: true,
     component: createPage({

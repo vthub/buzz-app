@@ -1,15 +1,15 @@
 import { test, expect } from "./source-fixture.mjs";
 
 const runtimeSwitch = (page) =>
-  page.getByRole("switch", { name: "Attention for Ada on this device" });
+  page.getByRole("switch", { name: "Watching for Ada on this device" });
 
 // Real browser focus and scroll geometry are outside jsdom.
-test("Agent Attention fits both themes and sizes and manages existing watches by keyboard", async ({
+test("The watching page fits both themes and sizes and manages existing watches by keyboard", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
   const pane = page.getByRole("region", {
-    name: "Agent Attention",
+    name: "What your agents are watching",
     exact: true,
   });
   await expect(page.getByRole("button", { name: "New watch" })).toHaveCount(0);
@@ -35,12 +35,12 @@ test("Agent Attention fits both themes and sizes and manages existing watches by
     }
   }
   const runtime = page.getByRole("switch", {
-    name: "Attention for Ada on this device",
+    name: "Watching for Ada on this device",
   });
   await runtime.focus();
   await page.keyboard.press("Space");
   await expect(runtime).toHaveAttribute("aria-checked", "false");
-  await expect(page.getByText("Attention paused on this device")).toBeVisible();
+  await expect(page.getByText("Watching paused on this device")).toBeVisible();
   await expect(
     page.getByRole("switch", { name: "Watch Release discussion" }),
   ).toBeVisible();
@@ -69,7 +69,7 @@ test("watch and interest deletion restore focus without taking it from another c
 }) => {
   await page.goto("/tests/fixtures/agent-attention.html");
   const pane = page.getByRole("region", {
-    name: "Agent Attention",
+    name: "What your agents are watching",
     exact: true,
   });
   const remove = page.getByRole("button", {
@@ -131,14 +131,14 @@ test("watch and interest deletion restore focus without taking it from another c
       .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
       .toBe(true);
     await page
-      .getByRole("switch", { name: "Attention for Ada on this device" })
+      .getByRole("switch", { name: "Watching for Ada on this device" })
       .focus();
   } finally {
     await page.evaluate(() => window.attentionFixture.releaseSave());
   }
   await expect(remove).toHaveCount(0);
   await expect(
-    page.getByRole("switch", { name: "Attention for Ada on this device" }),
+    page.getByRole("switch", { name: "Watching for Ada on this device" }),
   ).toBeFocused();
 });
 

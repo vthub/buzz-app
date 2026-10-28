@@ -156,7 +156,7 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
   expect(within(ada).getByText("Paused")).toBeTruthy();
   expect(
     within(ada).getByRole("switch", {
-      name: "Attention for Ada on this device",
+      name: "Watching for Ada on this device",
     }),
   ).toBeTruthy();
   fireEvent.click(within(ada).getByRole("switch", { name: "Watch task" }));
@@ -178,9 +178,9 @@ it("hides agents without subscriptions, reacts to changes and surfaces save erro
     };
     changed();
   });
-  expect(within(ada).getByText("Attention paused on this device")).toBeTruthy();
+  expect(within(ada).getByText("Watching paused on this device")).toBeTruthy();
   const toggle = within(ada).getByRole("switch", {
-    name: "Attention for Ada on this device",
+    name: "Watching for Ada on this device",
   });
   fireEvent.click(toggle);
   await waitFor(() =>
@@ -514,27 +514,40 @@ it("enables a chosen empty agent without creating subscriptions and reports fail
   } as unknown as Context;
   render(React.createElement(createPage(ctx)));
   expect(screen.queryByRole("region", { name: "Bo" })).toBeNull();
+  expect(screen.getByText(/Agents can ask to be woken later/)).toBeTruthy();
+  expect(
+    screen.getByText("Watches only run while Buzz is open on this device."),
+  ).toBeTruthy();
+  expect(
+    within(screen.getByRole("region", { name: "Suggested asks" }))
+      .getAllByRole("listitem")
+      .map((item) => item.textContent),
+  ).toEqual([
+    "\u201cWatch this thread for new messages\u201d",
+    "\u201cWatch my PR and tell me when CI finishes or someone reviews it\u201d",
+    "\u201cCheck this channel every morning at 9\u201d",
+  ]);
   fireEvent.click(
-    screen.getByRole("button", { name: "Enable Attention on this device" }),
+    screen.getByRole("button", { name: "Turn on watching on this device" }),
   );
   expect(
     (
       screen.getByRole("button", {
-        name: "Enable Attention",
+        name: "Turn on watching",
       }) as HTMLButtonElement
     ).disabled,
   ).toBe(true);
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Agent" }));
   await user.click(await screen.findByRole("option", { name: "Bo" }));
-  fireEvent.click(screen.getByRole("button", { name: "Enable Attention" }));
+  fireEvent.click(screen.getByRole("button", { name: "Turn on watching" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Enable failed"),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Enable Attention" }));
+  fireEvent.click(screen.getByRole("button", { name: "Turn on watching" }));
   await waitFor(() =>
     expect(screen.getByRole("status").textContent).toContain(
-      "Attention enabled for Bo",
+      "Watching turned on for Bo",
     ),
   );
   expect(save).toHaveBeenLastCalledWith("membership-b", {
@@ -584,7 +597,7 @@ it.each([undefined, "missing"])(
       relay: { snapshot: () => disconnected, subscribe: () => () => {} },
     } as unknown as Context;
     render(React.createElement(createPage(ctx)));
-    const repair = screen.getByRole("region", { name: "Without an interest" });
+    const repair = screen.getByRole("region", { name: "Stray watches" });
     expect(within(repair).getByText("watch/check")).toBeTruthy();
     expect(
       screen.queryByRole("switch", { name: "Watch Release check" }),
@@ -745,7 +758,7 @@ it.each([false, true])(
     expect(
       screen.getByRole("button", { name: "Open destination Berd-call" })
         .textContent,
-    ).toBe("→Berd-call");
+    ).toBe("Replies inBerd-call");
     expect(icon("Berd-call")).toBeTruthy();
     expect(icon("buzz-github-prs")).toBeTruthy();
     expect(icon("Berd-call")).not.toBe(icon("buzz-github-prs"));
@@ -777,12 +790,12 @@ it.each([false, true])(
       "https://github.com/block/buzz-app/pull/1578",
     );
     expect(screen.queryByText("Show raw")).toBeNull();
-    expect(screen.getByText(/Message classifiers cannot run/)).toBeTruthy();
+    expect(screen.getByText(/can't run message filters/)).toBeTruthy();
     act(() => {
       snapshot = { ...snapshot, classifier: "available" };
       changed();
     });
-    expect(screen.queryByText(/Message classifiers cannot run/)).toBeNull();
+    expect(screen.queryByText(/can't run message filters/)).toBeNull();
   },
 );
 
@@ -884,7 +897,7 @@ it("keeps overview and destination navigation in the selected community", async 
   expect(screen.queryByRole("region", { name: "Ada" })).toBeNull();
   expect(screen.getByRole("region", { name: "Bo" })).toBeTruthy();
   expect(save).not.toHaveBeenCalled();
-  expect(screen.queryByRole("switch", { name: "Attention for Bo" })).toBeNull();
+  expect(screen.queryByRole("switch", { name: "Watching for Bo" })).toBeNull();
 });
 
 it("keeps technical data out of message summaries and avoids repeating the destination", () => {

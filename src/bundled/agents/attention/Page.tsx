@@ -100,6 +100,11 @@ const channelIcon = (channel?: Channel) =>
     : channel?.private
       ? LockIcon
       : HashIcon;
+const suggestions = [
+  "Watch this thread for new messages",
+  "Watch my PR and tell me when CI finishes or someone reviews it",
+  "Check this channel every morning at 9",
+];
 const button = { variant: "ghost" as const, size: "sm" as const };
 
 /** Uses the host’s controls and surface roles. */
@@ -169,7 +174,7 @@ export function createPage({
     const text = h(
       "span",
       { className: "attention-destination-label" },
-      "→",
+      "Replies in",
       h(channelIcon(summary), { size: 16, "aria-hidden": true }),
       h(
         "span",
@@ -258,7 +263,7 @@ export function createPage({
     const state = completed
       ? "Completed"
       : description.spent
-        ? "Spent"
+        ? "Used up"
         : !watch.enabled
           ? "Paused"
           : !agent.attentionEnabled
@@ -336,9 +341,7 @@ export function createPage({
           watch.kinds?.length !== 1 ||
           watch.kinds[0] !== 9,
       );
-    const destination = watch.channel
-      ? `→ ${name(watch.channel)}${watch.root ? " thread" : ""}`
-      : "Independent turn";
+    const destination = "Wakes in a new conversation";
     return h(
       "li",
       {
@@ -710,10 +713,10 @@ export function createPage({
           "label",
           { className: "attention-agent-toggle text-caption text-subtle" },
           agent.attentionEnabled
-            ? "Attention on this device"
-            : "Attention paused on this device",
+            ? "Watching on this device"
+            : "Watching paused on this device",
           h(SharedSwitch, {
-            "aria-label": `Attention for ${agent.name} on this device`,
+            "aria-label": `Watching for ${agent.name} on this device`,
             checked: agent.attentionEnabled,
             disabled: action.pending,
             onCheckedChange: (attentionEnabled) =>
@@ -794,7 +797,7 @@ export function createPage({
               h(
                 "span",
                 { className: "text-caption text-primary whitespace-nowrap" },
-                "Instructions:",
+                "When woken:",
               ),
               h(
                 "span",
@@ -841,9 +844,9 @@ export function createPage({
           "section",
           {
             className: "attention-interest",
-            "aria-label": "Without an interest",
+            "aria-label": "Stray watches",
           },
-          h("h4", { className: "text-label" }, "Without an interest"),
+          h("h4", { className: "text-label" }, "Stray watches"),
           h(
             "p",
             { className: "text-body-sm text-subtle" },
@@ -918,7 +921,7 @@ export function createPage({
         if (!agent) throw new Error("Choose an available agent.");
         await agents.save(agent.key, { attentionEnabled: true });
         setNotice(
-          `Attention enabled for ${agent.name} on this device. Watches appear here when the agent creates them.`,
+          `Watching turned on for ${agent.name} on this device. Watches appear here when the agent creates them.`,
         );
         setAdding(false);
       });
@@ -927,13 +930,13 @@ export function createPage({
       {
         "data-buzz-ui": "",
         className: "attention-page",
-        "aria-label": "Agent Attention",
+        "aria-label": "What your agents are watching",
         ref: page,
         tabIndex: -1,
       },
 
       h(PanelHeader, {
-        title: h(PanelHeaderLabel, { title: "Agent Attention" }),
+        title: h(PanelHeaderLabel, { title: "What your agents are watching" }),
       }),
       h(
         "div",
@@ -944,8 +947,14 @@ export function createPage({
           h(
             "p",
             { className: "text-body-sm text-subtle" },
-            "Interests and watches in this community wake your agents.",
+            "Agents can ask to be woken later: when someone posts, at a set time, or when something changes, like CI finishing on a pull request. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
           ),
+          running.length > 0 &&
+            h(
+              "p",
+              { className: "text-caption text-subtle" },
+              "Watches only run while Buzz is open on this device.",
+            ),
           snapshot.classifier !== "available" &&
             running.some((agent) =>
               Object.values(agent.attention).some(
@@ -955,7 +964,7 @@ export function createPage({
             h(
               "p",
               { className: "text-body-sm text-secondary" },
-              "Message classifiers cannot run on this device, so every matching event passes.",
+              "This device can't run message filters, so every message in these channels wakes the agent.",
             ),
           !visible.length &&
             running.some((agent) => !agent.attentionEnabled) && (
@@ -967,7 +976,7 @@ export function createPage({
                   onClick: () => setAdding(!adding),
                 }}
               >
-                {"Enable Attention on this device"}
+                {"Turn on watching on this device"}
               </Button>
             ),
           adding &&
@@ -975,7 +984,7 @@ export function createPage({
               "form",
               {
                 className: "attention-card attention-details",
-                "aria-label": "Enable agent attention",
+                "aria-label": "Turn on watching",
                 onSubmit: (event: { preventDefault(): void }) => {
                   event.preventDefault();
                   void enable();
@@ -1007,7 +1016,7 @@ export function createPage({
                   disabled: !selected || action.pending,
                 }}
               >
-                {"Enable Attention"}
+                {"Turn on watching"}
               </Button>,
               problem(action.error),
             ),
@@ -1020,9 +1029,24 @@ export function createPage({
           !visible.length &&
             running.length > 0 &&
             h(
-              "p",
-              { className: "text-body-sm text-secondary" },
-              "No watches yet. Ask an agent to watch something.",
+              "section",
+              { "aria-label": "Suggested asks" },
+              h(
+                "p",
+                { className: "text-body-sm text-secondary" },
+                "No watches yet. Try asking an agent:",
+              ),
+              h(
+                "ul",
+                { className: "attention-list" },
+                ...suggestions.map((ask) =>
+                  h(
+                    "li",
+                    { key: ask, className: "attention-card text-body-sm" },
+                    `\u201c${ask}\u201d`,
+                  ),
+                ),
+              ),
             ),
           ...visible.map((agent) =>
             h(AgentPanel, {

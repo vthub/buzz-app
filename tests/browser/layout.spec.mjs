@@ -63,7 +63,7 @@ const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // The fixture's active plugin pages, in shell order, lead the channel sidebar.
 // Sidebar rows exclude header pages; Messages remains available through search.
-const destinationTitles = ["Inbox", "Bestie"];
+const destinationTitles = ["Inbox", "Watching", "Bestie"];
 const sidebarDestinations = (page, options = {}) =>
   page
     .getByRole("complementary", { name: "Sidebar", exact: true, ...options })

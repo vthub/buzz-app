@@ -25,12 +25,12 @@ export const shellPresentation = {
 const bundledOrder = [
   "buzz.channels/channels",
   "buzz.inbox/inbox",
+  "buzz.agents/attention",
   "buzz.reminders/reminders",
   "buzz.bestie/bestie",
 ];
 export function orderPages(pages: readonly RegisteredPage[]) {
   const rank = (page: RegisteredPage) => {
-    if (page.key === "buzz.agents/attention") return bundledOrder.length + 1;
     const slot = bundledOrder.indexOf(page.key);
     return slot === -1 ? bundledOrder.length : slot;
   };

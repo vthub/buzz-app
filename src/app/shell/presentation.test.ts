@@ -35,16 +35,16 @@ const messages = page("buzz.channels/channels", "Channels");
 const inbox = page("buzz.inbox/inbox", "Inbox");
 const bestie = page("buzz.bestie/bestie", "Bestie");
 const projects = page("fixture.projects/projects", "Projects");
-const attention = page("buzz.agents/attention", "Agent Attention");
+const attention = page("buzz.agents/attention", "Watching");
 
 test("bundled page order ignores activation order without mutating the registry", () => {
   const input = Object.freeze([attention, projects, bestie, messages, inbox]);
   expect(orderPages(input)).toEqual([
     messages,
     inbox,
+    attention,
     bestie,
     projects,
-    attention,
   ]);
   expect(input).toEqual([attention, projects, bestie, messages, inbox]);
   expect(orderPages([messages, projects])).toEqual([messages, projects]);

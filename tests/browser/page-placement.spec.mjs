@@ -23,8 +23,13 @@ test("shared navigation preserves drafts and history across Solo and header page
     "Reminders",
     "Agents",
     "Workflows",
-    "Agent Attention",
   ]);
+  // Watching is a sidebar page, ordered directly below Inbox.
+  const rows = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button");
+  await expect(rows.nth(0)).toHaveText("Inbox");
+  await expect(rows.nth(1)).toHaveText("Watching");
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
     exact: true,
@@ -569,7 +574,6 @@ test("header pages remain reachable without overlap through scale and resize", a
         "Agents",
         "Toolbar destination",
         "Workflows",
-        "Agent Attention",
       ]);
       await page.keyboard.press("Escape");
       await expect(choices).toHaveCount(0);

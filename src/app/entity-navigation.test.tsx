@@ -227,7 +227,7 @@ it("lists active primary pages in their sidebar and header placements", async ()
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Bestie"]),
+    ).toEqual(["Inbox", "Watching", "Bestie"]),
   );
 
   expect(
@@ -235,10 +235,16 @@ it("lists active primary pages in their sidebar and header placements", async ()
   ).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
 
-  const attentionTab = screen.getByRole("tab", { name: "Agent Attention" });
-  await userEvent.click(attentionTab);
   expect(
-    await screen.findByRole("region", { name: "Agent Attention" }),
+    screen.queryByRole("tab", { name: "Watching" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(
+    within(pages).getByRole("button", { name: "Watching" }),
+  );
+  expect(
+    await screen.findByRole("region", {
+      name: "What your agents are watching",
+    }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "New watch" })).toBeNull();
 
@@ -257,9 +263,6 @@ it("lists active primary pages in their sidebar and header placements", async ()
   );
 
   expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("tab", { name: "Agent Attention" }),
-  ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const search = await screen.findByRole("dialog", { name: "Search Buzz" });
   expect(
