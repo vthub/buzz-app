@@ -336,8 +336,8 @@ mod macos {
     /// thread, from a main-queue block scheduled at `RunEvent::Ready`: the
     /// modal alert redraws the visible main window, which re-enters tao, so it
     /// must not be called from inside a tao event-loop callback (see the call
-    /// site in `lib.rs`). On acceptance this relaunches from the installed
-    /// copy and exits the current process.
+    /// site in `lib.rs`). On acceptance this tears down as Quit does,
+    /// relaunches from the installed copy and exits the current process.
     pub(crate) fn maybe_prompt_move_to_applications(app: &AppHandle) {
         // Never interrupt development builds, which legitimately run from
         // `target/` and similar non-installed locations.
@@ -402,6 +402,11 @@ mod macos {
         match move_to_applications_and_relaunch(&bundle_path, &volume, location) {
             Ok(()) => {
                 eprintln!("Relaunching Buzz from /Applications");
+                // Tear down as Quit does, so terminals, plugin processes and
+                // agent runtimes don't outlive us. Only now: had the move or
+                // the relaunch failed, the app would keep running and still
+                // need them.
+                crate::shut_down(app);
                 std::process::exit(0);
             }
             Err(error) => {
