@@ -16,6 +16,7 @@ import {
 } from "react";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
+import styles from "../../bundled/channels/Channels.module.css";
 import { orderContributedSidebarSections } from "../../bundled/channels/sidebar-sections";
 import type { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -331,7 +332,11 @@ function RegionFrame({
             </>
           }
           headerNotice={
-            actionError && <p role="alert">The action could not run.</p>
+            actionError && (
+              <p className={styles.contributionFeedback} role="alert">
+                The action could not run.
+              </p>
+            )
           }
         >
           {source &&
