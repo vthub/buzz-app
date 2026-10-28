@@ -169,6 +169,46 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               (error) => /BUZZ_BUILDERLAB_TENANTS must be/.test(error.message) && !error.message.includes('secret'),
             );
             process.env.BUZZ_BUILDERLAB_TENANTS = '';
+            // The first-run account seed reaches only a dev server, and a
+            // malformed value fails at configuration time without being echoed.
+            for (const command of ['serve', 'build']) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = 'unlinked';
+              const seeded = await loadConfigFromFile(
+                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+              );
+              assert.equal(
+                seeded.config.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+                JSON.stringify(command === 'serve' ? 'unlinked' : ''),
+              );
+            }
+            // A backup kind resolves against the failure table, and backups
+            // and a recovery key decode, through the native loader.
+            const failingSeed = JSON.stringify({
+              backup: 'unreachable',
+              known: ['design.example.com'],
+              backups: ['npub1424242424242424242424242424242424242424242424242424qamrcaj'],
+              recovery: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw',
+            });
+            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = failingSeed;
+            const failing = await loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile);
+            assert.equal(
+              failing.config.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+              JSON.stringify(failingSeed),
+            );
+            for (const seed of [
+              '{"npub":"s3cret"}',
+              '{"backup":"s3cret"}',
+              '{"backups":["s3cret"]}',
+              '{"recovery":"nsec1s3cret"}',
+              '{"known":["http://s3cret.example"]}',
+            ]) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = seed;
+              await assert.rejects(
+                loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
+                (error) => /BUZZ_DEV_FIRST_RUN_ACCOUNT must be/.test(error.message) && !error.message.includes('s3cret'),
+              );
+            }
+            delete process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT;
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';

@@ -57,7 +57,7 @@ function unexpected(status: number): Refusal {
 /** A listed row's destination. `null` is a row whose address this device could
  * never save (dropped on its own), `undefined` a row of a shape this client
  * does not understand, which makes the whole response invalid. */
-function address(row: unknown): string | null | undefined {
+export function listedAddress(row: unknown): string | null | undefined {
   if (!row || typeof row !== "object") return undefined;
   const { community_url } = row as Record<string, unknown>;
   if (typeof community_url !== "string") return undefined;
@@ -161,7 +161,7 @@ export function createKnownCommunitiesClient(
       // Protobuf JSON can omit an empty repeated field.
       const rows = value.communities ?? [];
       if (!Array.isArray(rows)) return { kind: "invalid_response" };
-      const addresses = rows.map(address);
+      const addresses = rows.map(listedAddress);
       if (addresses.includes(undefined)) return { kind: "invalid_response" };
       const communities = addresses.filter((a): a is string => a !== null);
       return {
