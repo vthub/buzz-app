@@ -28,8 +28,6 @@ export type AuthorPolicy = Readonly<{
 /** The signed-in GitHub account, which agents use too. */
 export const ME = "@me";
 export const POLICY_KEY = "buzz.github.author-policy.v2";
-/** Trusted organizations and logins, and ignored logins, before rules. */
-export const LEGACY_POLICY_KEY = "buzz.github.author-policy.v1";
 /** Agents comment as the signed-in account and start with 🤖, so their own
  * comments wake nobody; the owner's other comments wake the agent. */
 export const DEFAULT_RULES = `deny author:${ME} prefix:🤖
@@ -117,50 +115,16 @@ export function parse(text: string): AuthorPolicy | string {
 
 const DEFAULT = parse(DEFAULT_RULES) as AuthorPolicy;
 
-/** The rules a saved list of trusted organizations, trusted logins and
- * ignored logins amounts to, with agents' own comments still denied. */
-function upgrade(value: unknown) {
-  const lists = value as {
-    version?: unknown;
-    trustedOrganizations?: unknown;
-    trustedAuthors?: unknown;
-    ignoredAuthors?: unknown;
-  } | null;
-  const list = (items: unknown) =>
-    Array.isArray(items) && items.every((item) => typeof item === "string")
-      ? (items as string[])
-      : undefined;
-  const organizations = list(lists?.trustedOrganizations);
-  const trusted = list(lists?.trustedAuthors);
-  const ignored = list(lists?.ignoredAuthors);
-  if (lists?.version !== 1 || !organizations || !trusted || !ignored)
-    return undefined;
-  return [
-    `deny author:${ME} prefix:🤖`,
-    ...ignored.map((login) => `deny author:${login}`),
-    ...(organizations.length || trusted.length
-      ? [
-          `allow author:${ME}`,
-          ...trusted.map((login) => `allow author:${login}`),
-          ...organizations.map((org) => `allow org:${org}`),
-        ]
-      : ["allow"]),
-  ].join("\n");
-}
-
 export function loadPolicy(): AuthorPolicy {
   try {
     const saved = JSON.parse(localStorage.getItem(POLICY_KEY) ?? "null") as {
       version?: unknown;
       text?: unknown;
     } | null;
-    const text =
+    const policy =
       saved?.version === 2 && typeof saved.text === "string"
-        ? saved.text
-        : upgrade(
-            JSON.parse(localStorage.getItem(LEGACY_POLICY_KEY) ?? "null"),
-          );
-    const policy = text === undefined ? DEFAULT : parse(text);
+        ? parse(saved.text)
+        : DEFAULT;
     return typeof policy === "string" ? DEFAULT : policy;
   } catch {
     return DEFAULT;

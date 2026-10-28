@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   admit,
   DEFAULT_RULES,
-  LEGACY_POLICY_KEY,
   loadPolicy,
   membershipRequest,
   open,
@@ -142,45 +141,6 @@ allow org:Block body:/bug/s`);
     expect(loadPolicy().text).toBe(DEFAULT_RULES);
     localStorage.setItem(POLICY_KEY, "{");
     expect(loadPolicy().text).toBe(DEFAULT_RULES);
-  });
-
-  it("turn saved lists into the rules they amount to", () => {
-    const legacy = (lists: object) => {
-      localStorage.setItem(
-        LEGACY_POLICY_KEY,
-        JSON.stringify({
-          version: 1,
-          trustedOrganizations: [],
-          trustedAuthors: [],
-          ignoredAuthors: [],
-          ...lists,
-        }),
-      );
-      return loadPolicy().text;
-    };
-    expect(legacy({ ignoredAuthors: ["spammer"] })).toBe(
-      "deny author:@me prefix:🤖\ndeny author:spammer\nallow",
-    );
-    expect(
-      legacy({
-        trustedOrganizations: ["block"],
-        trustedAuthors: ["wes", "copilot[bot]"],
-        ignoredAuthors: ["noisy"],
-      }),
-    ).toBe(`deny author:@me prefix:🤖
-deny author:noisy
-allow author:@me
-allow author:wes
-allow author:copilot[bot]
-allow org:block`);
-    localStorage.setItem(
-      LEGACY_POLICY_KEY,
-      '{"version":1,"trustedAuthors":"wes"}',
-    );
-    expect(loadPolicy().text).toBe(DEFAULT_RULES);
-    // Saved rules win over lists.
-    savePolicy("allow org:block");
-    expect(legacy({ ignoredAuthors: ["spammer"] })).toBe("allow org:block");
   });
 
   it("ask which organizations each author is in, and read the answer", () => {

@@ -11,7 +11,7 @@ import type { Agent, AgentAttention } from "../../features/agents/service";
 import type { AttentionValue } from "../../features/agents/attention";
 import { POLL_MS, watchPulls } from "./watcher";
 import { pullOf, pullRequest, QUIET_MS, WAKE_LIMIT } from "./watch";
-import { LEGACY_POLICY_KEY, savePolicy } from "./authors";
+import { savePolicy } from "./authors";
 
 const agent = "a".repeat(64);
 const root = "f".repeat(64);
@@ -750,16 +750,7 @@ describe("github_watch_pr", () => {
   });
 
   it("tells only feedback from trusted authors, once their organization is known", async () => {
-    // Lists saved before rules still apply, as rules.
-    localStorage.setItem(
-      LEGACY_POLICY_KEY,
-      JSON.stringify({
-        version: 1,
-        trustedOrganizations: ["block"],
-        trustedAuthors: ["wes"],
-        ignoredAuthors: [],
-      }),
-    );
+    savePolicy("allow author:wes\nallow org:block");
     const app = setup();
     await app.call({ url });
     app.members(null);
