@@ -211,9 +211,9 @@ it("forgets a summary observed before a failed attempt so the retry still counts
 it("does not layer a reply restored from the journal on a summary that counts it", () => {
   const reply = message(bob, channel, "re", 11, [["e", root.id, "", "reply"]]);
   const covering = total(3, 20, [alice.pubkey, bob.pubkey]);
-  // Restored deliveries are confirmed (seen), rejected, or unknown: never a
-  // fresh send, so the root's retained summary speaks for them.
-  for (const delivery of ["seen", "unknown", "failed"] as const) {
+  // A confirmed (seen) or unknown restored delivery may have committed, so the
+  // root's retained summary speaks for it.
+  for (const delivery of ["seen", "unknown"] as const) {
     const p = projection();
     expect(thread(p.reconcile([root, covering], []))).toEqual([
       3,
@@ -225,4 +225,52 @@ it("does not layer a reply restored from the journal on a summary that counts it
       ),
     ).toEqual([3, [alice.pubkey, bob.pubkey]]);
   }
+});
+
+it("keeps a rejected reply restored from the journal layered until its retry is counted", () => {
+  const reply = message(bob, channel, "re", 11, [["e", root.id, "", "reply"]]);
+  const send = (delivery: OutgoingEvent["delivery"]): OutgoingEvent[] => [
+    { event: reply, delivery },
+  ];
+  const covering = total(3, 20, [alice.pubkey, carol.pubkey]);
+  const p = projection();
+  expect(thread(p.reconcile([root, covering], []))).toEqual([
+    3,
+    [alice.pubkey, carol.pubkey],
+  ]);
+  // The relay never committed a rejected send, so its row restores uncounted.
+  const events = [root, covering, reply];
+  expect(thread(p.reconcile(events, send("failed")))).toEqual([
+    4,
+    [bob.pubkey, alice.pubkey, carol.pubkey],
+  ]);
+  // Retry publishes the same event; the summary retained before it cannot vouch.
+  for (const delivery of ["sending", "accepted", "seen"] as const)
+    expect(thread(p.reconcile(events, send(delivery)))).toEqual([
+      4,
+      [bob.pubkey, alice.pubkey, carol.pubkey],
+    ]);
+  const counted = total(4, 21, [alice.pubkey, carol.pubkey, bob.pubkey]);
+  expect(thread(p.reconcile([...events, counted], send("seen")))).toEqual([
+    4,
+    [alice.pubkey, carol.pubkey, bob.pubkey],
+  ]);
+});
+
+it("drops a rejected reply restored from the journal when it is dismissed", () => {
+  const reply = message(bob, channel, "re", 11, [["e", root.id, "", "reply"]]);
+  const covering = total(3, 20, [alice.pubkey, carol.pubkey]);
+  const p = projection();
+  expect(
+    thread(
+      p.reconcile(
+        [root, covering, reply],
+        [{ event: reply, delivery: "failed" }],
+      ),
+    ),
+  ).toEqual([4, [bob.pubkey, alice.pubkey, carol.pubkey]]);
+  expect(thread(p.reconcile([root, covering], []))).toEqual([
+    3,
+    [alice.pubkey, carol.pubkey],
+  ]);
 });

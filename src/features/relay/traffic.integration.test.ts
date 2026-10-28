@@ -332,6 +332,60 @@ it("keeps a rejected reply counted while it stays visible for retry and drops it
   expect(row()?.participants).toEqual([]);
 });
 
+it("restores a rejected reply still counted and settles it through retry, receipt and summary", async () => {
+  const root = message(other, "c", "root", 10);
+  const summary = (total: number, at: number, participants: string[]) =>
+    signed(relay, {
+      kind: 39005,
+      created_at: at,
+      tags: [
+        ["h", "c"],
+        ["e", root.id],
+        ["d", root.id],
+      ],
+      content: JSON.stringify({ descendant_count: total, participants }),
+    });
+  const h = fixture([root, summary(2, 11, [other.pubkey])]);
+  await h.open();
+  const id = h.session.messages.reply("c", root.id, "mine");
+  const event = await h.sign();
+  const publication = h.publications.shift();
+  assert.exists(publication);
+  publication.result.reject(new PublishRejected("denied"));
+  await flush();
+  h.dispose();
+  // The journal restores the rejected send as failed; its row stays visible
+  // for retry and the relay never counted it.
+  const restored = createRelaySession(h.transport, {
+    outboxStorage: h.storage,
+  });
+  owners.push(restored);
+  restored.session.channels.ensureList();
+  await flush();
+  restored.session.channels.ensure("c");
+  await flush();
+  await flush();
+  const row = () => restored.session.channels.window("c").rows[0];
+  const thread = () => [row()?.replyCount, row()?.participants];
+  assert.exists(restored.session.outbox);
+  expect(
+    restored.session.outbox.snapshot().find((item) => item.event.id === id)
+      ?.delivery,
+  ).toBe("failed");
+  expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
+  // Retry republishes the saved signed event; the summary retained before the
+  // restore cannot vouch for it, so the receipt alone does not settle it.
+  restored.session.outbox.retry(id);
+  await flush();
+  expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
+  await h.acknowledge(event);
+  expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
+  h.emit([event, summary(3, 20, [other.pubkey, viewer.pubkey])]);
+  await flush();
+  expect(thread()).toEqual([3, [other.pubkey, viewer.pubkey]]);
+  expect(restored.session.outbox.snapshot()).toHaveLength(0);
+});
+
 it("counts an own reply once when the relay's summary lands before the publish receipt", async () => {
   const root = message(other, "c", "root", 10);
   const summary = (total: number, at: number, participants: string[]) =>

@@ -19,9 +19,11 @@ export class MessageProjection {
   private deliveries = new Map<string, OutgoingEvent>();
   private owners = new Map<string, string | undefined>();
   /** This client's reply sends that no relay summary has counted yet. A send
-   * still `sending` when first retained is the one reply known to be uncounted:
-   * a stored or journal-restored reply is already in its root's retained
-   * summary, and another user's live reply is counted by the relay's follow-up.
+   * `sending` or `failed` when first retained is known to be uncounted: the
+   * relay never committed a rejected send, which its row keeps visible for
+   * retry across a restart, whereas a confirmed or unknown journal-restored
+   * reply is already in its root's retained summary, and another user's live
+   * reply is counted by the relay's follow-up.
    * The relay emits a thread's summary after each reply commits, racing the
    * publish receipt and the echo, so a newer root summary observed since the
    * send began vouches for it and the reply leaves once its send is also settled
@@ -90,9 +92,10 @@ export class MessageProjection {
       if (this.inputs.has(id)) continue;
       if (messageKind(event.kind)) {
         this.clock.observe(this.channelId, eventMs(event));
+        const delivery = deliveries.get(id)?.delivery;
         if (
           threadReference(event)?.rootId &&
-          deliveries.get(id)?.delivery === "sending"
+          (delivery === "sending" || delivery === "failed")
         )
           this.pending.add(id);
       } else if (event.kind === 39005 && event.pubkey === this.relayAuthor) {
