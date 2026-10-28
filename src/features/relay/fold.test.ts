@@ -350,7 +350,7 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
-  it("layers pending replies on their root's summary and leads participants with new repliers", () => {
+  it("layers pending replies on their root's summary and leads participants with their authors", () => {
     const root = message(alice, channel, "root", 10);
     const reply = (key: typeof bob, at: number, channelId = channel) =>
       message(key, channelId, "re", at, [["e", root.id, "", "reply"]]);
@@ -381,7 +381,7 @@ describe("message fold", () => {
         second,
         count({ descendant_count: 1, participants: [bob.pubkey] }),
       ]),
-    ).toEqual([[3, [alice.pubkey, bob.pubkey]]]);
+    ).toEqual([[3, [bob.pubkey, alice.pubkey]]]);
     // Replies the summary counted stand only through the summary.
     expect(
       fold(
@@ -412,6 +412,16 @@ describe("message fold", () => {
         }),
       ]),
     ).toEqual([[4, [bob.pubkey, alice.pubkey, carol.pubkey, dave.pubkey]]]);
+    // So does a returning replier the summary lists after the visible three.
+    expect(
+      fold([
+        first,
+        count({
+          descendant_count: 4,
+          participants: [alice.pubkey, carol.pubkey, dave.pubkey, bob.pubkey],
+        }),
+      ]),
+    ).toEqual([[5, [bob.pubkey, alice.pubkey, carol.pubkey, dave.pubkey]]]);
     // The relay lists a relay-signed workflow reply by its signer; the client
     // shows its author but adds no second identity next to that signer.
     const workflow = signed(relay, {

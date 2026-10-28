@@ -163,10 +163,10 @@ export type ChannelMessage = Readonly<{
    * replies wait for the relay's summary).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
-  /** Authors of this client's own reply sends no summary has counted yet that the
-   * relay does not list (so an own reply's avatar shows, first, before the relay's
-   * summary arrives), followed by the pubkeys the relay reports as thread
-   * participants (may be empty even with replies). */
+  /** Authors of this client's own reply sends no summary has counted yet, even
+   * when the relay already lists them (so an own reply's avatar shows, first,
+   * before the relay's summary arrives), followed by the other pubkeys the relay
+   * reports as thread participants (may be empty even with replies). */
   participants: readonly string[];
 }>;
 export type ListStatus = "unavailable" | "idle" | "loading" | "ready" | "error";

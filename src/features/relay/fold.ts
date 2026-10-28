@@ -408,13 +408,15 @@ export function foldMessages(
       ? []
       : (replies.get(event.id)?.filter((reply) => !deleted(reply)) ?? []);
     // The relay lists participants by signer, so a pending reply whose signer
-    // it already lists (a relay-signed workflow reply) adds no second identity.
-    const newAuthors = pending.flatMap((reply) =>
-      summary.participants.includes(reply.pubkey) ||
-      summary.participants.includes(messageAuthor(reply, signingAuthority))
-        ? []
-        : [messageAuthor(reply, signingAuthority)],
-    );
+    // it lists but not its author (a relay-signed workflow reply) leads as that
+    // signer rather than adding a second identity.
+    const repliers = pending.map((reply) => {
+      const author = messageAuthor(reply, signingAuthority);
+      return !summary.participants.includes(author) &&
+        summary.participants.includes(reply.pubkey)
+        ? reply.pubkey
+        : author;
+    });
     rows.push(
       Object.freeze({
         id: event.id,
@@ -494,9 +496,10 @@ export function foldMessages(
           deleted,
         ),
         replyCount: summary.replyCount + pending.length,
-        // New repliers lead so they stay within the visible avatar stack.
+        // Pending repliers lead, returning ones included, so they stay within
+        // the visible avatar stack.
         participants: Object.freeze([
-          ...new Set([...newAuthors, ...summary.participants]),
+          ...new Set([...repliers, ...summary.participants]),
         ]),
       }),
     );

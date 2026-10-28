@@ -162,11 +162,12 @@ it("counts a send once when its summary lands before the publish receipt", () =>
     [bob.pubkey, alice.pubkey],
   ]);
   // The relay spawns the summary before it answers the publish, so the
-  // counting summary can beat the receipt; the send stays on top meanwhile.
+  // counting summary can beat the receipt; the send stays on top meanwhile,
+  // its author leading though the relay already lists them.
   const counting = total(3, 21, [alice.pubkey, bob.pubkey]);
   expect(thread(p.reconcile([...events, counting], send("sending")))).toEqual([
     4,
-    [alice.pubkey, bob.pubkey],
+    [bob.pubkey, alice.pubkey],
   ]);
   // Settling the send reconciles it with no further summary.
   expect(thread(p.reconcile([...events, counting], send("accepted")))).toEqual([

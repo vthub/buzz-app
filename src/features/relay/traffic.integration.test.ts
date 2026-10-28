@@ -407,9 +407,10 @@ it("counts an own reply once when the relay's summary lands before the publish r
   const event = await h.sign();
   expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
   // The relay fans the summary out over the live stream before it answers the
-  // publish; the send stays layered until the receipt settles it.
+  // publish; the send stays layered, its author leading, until the receipt
+  // settles it and the relay's order shows.
   h.emit([summary(3, 20, [other.pubkey, viewer.pubkey])]);
-  expect(thread()).toEqual([4, [other.pubkey, viewer.pubkey]]);
+  expect(thread()).toEqual([4, [viewer.pubkey, other.pubkey]]);
   await h.acknowledge(event);
   expect(thread()).toEqual([3, [other.pubkey, viewer.pubkey]]);
   // No further summary follows on a quiet thread; the echo changes nothing.
