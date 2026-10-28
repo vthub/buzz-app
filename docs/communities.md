@@ -42,7 +42,23 @@ publication uses a signed kind:0 event and requires a matching accepted receipt
 and current profile readback before the client saves the completed membership.
 Rejected setup retains input and does not replace the currently selected community.
 An admitted invite is a remote side effect and is not undone if later profile
-setup fails or is cancelled.
+setup fails or is cancelled. The native first-run **Join Community** page
+(`features/identity/Welcome.tsx`, [identity](identity.md)) is the only other
+caller of `communities.joined`, through the same owner as the dialog
+(`join.ts`): the join is journaled before any remote effect, a code from an
+invite link or the invite page is claimed with the same policy receipt and
+signed claim (a journaled join reads before it reclaims), and the signed profile
+read proves admission; the join itself publishes no profile. The first-run
+profile step that follows, when no profile exists yet, is the dialog's: a fresh
+read, a kind 0 published when the draft differs, its readback, and only then
+the saved and selected membership. First run's
+restore of the account's [known communities](#known-communities) joins each
+admitted destination through the same read and call. `Welcome` is also the
+second caller of the invite intent (`invite-intent.ts`) beside OS deep links:
+an address typed on the welcome screen that the restore did not admit opens
+this dialog, prefilled, as the app opens.
+
+
 
 Profile editing preserves existing fields that this editor does not expose.
 After a confirmed Settings save, the profile also becomes the device-local
@@ -156,7 +172,17 @@ devices of one account can disagree about a community, and an add queued while
 the service was unreachable can likewise land after another device's removal.
 Joining and leaving never wait for sync. The `knownCommunities` capability
 exposes the record, the queue and these writes to one owner, the bundled
-Builderlab plugin.
+Builderlab plugin. First run reads the same account list after the Builderlab
+sign-in and restores it before the app opens ([identity](identity.md)): each
+destination that admits the new device's key is joined through an admission
+read, so a refused or unreachable one is not saved then; the next sign-in's
+merge adds it without a read, as for any other device. Removals are ignored
+there too. A join on first run's **Join Community** page is also posted to the
+account's add at once with the first-run sign-in's credential, since the
+Settings session that sends the outbox may not exist until a later manual
+sign-in; `joined()` still queues the add, and the next sign-in sends it again,
+which the service's idempotent add makes harmless. Restored destinations are not
+posted.
 
 The list is account-scoped, but this state is still kept under the device
 record's viewer key (`buzz-client.v1:<viewer>`), where it outlives a

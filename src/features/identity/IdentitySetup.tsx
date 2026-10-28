@@ -20,6 +20,7 @@ import styles from "./IdentitySetup.module.css";
 import { OnboardingWordmark } from "./OnboardingWordmark";
 import { OnboardingScreen } from "./OnboardingScreen";
 
+/** Key import/create gate; the app's first launch now uses Welcome instead. */
 export function IdentitySetup({
   identity,
   children,
