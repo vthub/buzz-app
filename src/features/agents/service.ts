@@ -1570,7 +1570,7 @@ export class AgentsService extends Service implements Agents {
     this.protection = new AgentProtectionService(
       ctx,
       () => ({
-        owner: this.bound.get(this.selectedOrigin() ?? "")?.binding?.viewer,
+        owner: this.communities.snapshot().viewer,
         agents: this.state.running,
         types: this.types(),
       }),

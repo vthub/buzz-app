@@ -12129,3 +12129,28 @@ it("refuses external Attention commands for a protected agent before process or 
   expect(spawn).not.toHaveBeenCalled();
   expect(serveMcp).not.toHaveBeenCalled();
 });
+
+it("keeps owned protection settings visible while the selected community reconnects", async () => {
+  const f = await setup({ protection: true });
+  const protectionDefaults = vi.fn(async () => ({
+    revision: 0,
+    defaults: null,
+  }));
+  Object.assign(f.native, { protectionDefaults });
+  await f.service.create({ type: "example/echo", name: "Worker" });
+  await vi.waitFor(() => expect(f.service.snapshot().running).toHaveLength(1));
+  f.fail();
+  await settle();
+  const snapshot = await f.plugin.agentProtection.snapshot();
+  expect(snapshot.agents).toEqual([
+    expect.objectContaining({
+      id: bot,
+      name: "Worker",
+      coverage: { supported: true },
+    }),
+  ]);
+  expect(protectionDefaults).toHaveBeenLastCalledWith(viewer);
+  f.emit({ events: [deploy("offline-protection-settings")] });
+  await settle();
+  expect(f.run).not.toHaveBeenCalled();
+});

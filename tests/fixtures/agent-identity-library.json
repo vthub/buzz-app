@@ -100,9 +100,79 @@
     }
   },
   {
-    "name": "unknown store version",
+    "name": "protected version 3 exposes only public identity metadata",
     "rows": {
       "version": 3,
+      "agents": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "relay": "wss://relay.example",
+          "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "auth": "private attestation",
+          "type": "plugin/agent",
+          "name": "Ada",
+          "picture": "https://images.example/ada.png",
+          "protection": {
+            "provider": "com.squareup.buzz-security",
+            "policy": {
+              "version": 2,
+              "privateReviewPolicy": "must not appear in public library"
+            }
+          },
+          "protectionRevision": 1
+        },
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "relay": "wss://other.example",
+          "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "auth": "private attestation",
+          "type": "plugin/agent",
+          "name": "Ada",
+          "home": "wss://relay.example",
+          "protection": {
+            "provider": "com.squareup.buzz-security",
+            "policy": {
+              "version": 2,
+              "privateReviewPolicy": "must not appear in public library"
+            }
+          },
+          "protectionRevision": 1
+        },
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "relay": "wss://third.example",
+          "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "auth": "private attestation",
+          "type": "plugin/agent",
+          "name": "Cy",
+          "home": "wss://third-home.example",
+          "joining": true,
+          "protection": {
+            "provider": "com.squareup.buzz-security",
+            "policy": {
+              "version": 2,
+              "privateReviewPolicy": "must not appear in public library"
+            }
+          },
+          "protectionRevision": 1
+        }
+      ]
+    },
+    "expected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Ada",
+          "avatar": "https://images.example/ada.png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unknown store version",
+    "rows": {
+      "version": 99,
       "agents": []
     }
   },
