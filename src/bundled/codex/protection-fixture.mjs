@@ -113,6 +113,7 @@ await new Promise((r) => http.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${http.address().port}`;
 const child = spawn(process.argv[2], [], {
   cwd: dir,
+  detached: process.platform !== "win32",
   env: {
     ...process.env,
     CODEX_HOME: dir,
@@ -220,11 +221,13 @@ try {
     );
     console.log(JSON.stringify({ disabledInputInspection: true }));
   } else {
+    const evidenceTail = "final complete security evidence";
+    const largeInput =
+      "Write the requested fixture file. " +
+      "context ".repeat(12000) +
+      evidenceTail;
     const session = await start();
-    const working = turn(
-      session.thread.id,
-      "Write the requested fixture file.",
-    );
+    const working = turn(session.thread.id, largeInput);
     let deadline;
     await Promise.race([
       toolEntered,
@@ -248,6 +251,23 @@ try {
           ),
       ),
     );
+    const inspectedInput = checks.find(
+      (row) =>
+        row.kind === "context" &&
+        JSON.stringify(row.content).includes(evidenceTail),
+    );
+    assert.ok(inspectedInput, "Large model input lost its final evidence");
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(inspectedInput.content)) > 65536,
+    );
+    assert.ok(
+      checks.some(
+        (row) =>
+          row.kind === "tool" &&
+          JSON.stringify(row.content.conversation).includes(evidenceTail),
+      ),
+      "Tool review lost the large preceding conversation",
+    );
     phase = "deny";
     const second = await start();
     await turn(second.thread.id, "Write the second fixture.");
@@ -267,8 +287,28 @@ try {
     );
   }
 } finally {
-  child.kill();
+  const stopped =
+    child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise((resolve) => child.once("exit", resolve));
+  if (process.platform === "win32") child.kill();
+  else {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch (error) {
+      if (error.code !== "ESRCH") {
+        console.error("Fixture process group could not stop", error);
+        child.kill();
+      }
+    }
+  }
+  await stopped;
   http.closeAllConnections();
   await new Promise((r) => http.close(r));
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, {
+    recursive: true,
+    force: true,
+    maxRetries: 3,
+    retryDelay: 100,
+  });
 }

@@ -151,7 +151,7 @@ export function protectTool(tool, inspect, preceding = async () => []) {
         bytes += Buffer.byteLength(
           typeof value === "string" ? value : JSON.stringify(value),
         );
-        if (bytes > 65536)
+        if (bytes > 256 * 1024)
           throw new Error("Protected Pi tool output exceeds the review limit");
       };
       let result;
@@ -1072,7 +1072,7 @@ export function serve({
         !turn.prompt ||
         typeof turn.prompt.system !== "string" ||
         typeof turn.prompt.input !== "string" ||
-        Buffer.byteLength(JSON.stringify(turn.prompt)) > 65536
+        Buffer.byteLength(JSON.stringify(turn.prompt)) > 768 * 1024
       )
         throw new Error("Invalid security review request");
       const controller = new AbortController();

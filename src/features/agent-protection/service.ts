@@ -164,7 +164,7 @@ export class AgentProtectionService extends Service {
     if (!provider)
       throw new Error("The selected review model's runtime is unavailable");
     const prompt = reviewPrompt(action, purpose);
-    if (new TextEncoder().encode(JSON.stringify(prompt)).length > 65536)
+    if (new TextEncoder().encode(JSON.stringify(prompt)).length > 768 * 1024)
       throw new Error("Security review context is too large");
     const result = await provider.complete(model, prompt, signal);
     signal.throwIfAborted();
@@ -318,7 +318,10 @@ export class AgentProtectionService extends Service {
           relay: agent.relay,
           runtime: agent.type,
         });
-        if (new TextEncoder().encode(JSON.stringify(request)).length > 65536)
+        if (
+          new TextEncoder().encode(JSON.stringify(request)).length >
+          256 * 1024
+        )
           throw new Error("Protected action is too large");
         let stop!: () => void;
         const cancelled = new Promise<never>((_, reject) => {

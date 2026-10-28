@@ -307,3 +307,59 @@ it("temporary explanations separate trusted instructions from evidence and never
   expect(f.save).not.toHaveBeenCalled();
   expect(f.update).not.toHaveBeenCalled();
 });
+
+it("preserves complete large actions and bounds serialized review prompts separately", async () => {
+  const f = await fixture();
+  const check = vi.fn(async (_request: ProtectionRequest) => true);
+  f.plugin.agentProtection.register({ processProtection, check });
+  const gate = f.security.bind({
+    ...f.agent,
+    protection: { provider: "security.test", policy: {} },
+  });
+  if (!gate) throw new Error("Expected protected handle");
+  const content = `${'"\\😀'.repeat(20000)}final evidence`;
+  await gate.check({ ...action, content }, new AbortController().signal);
+  expect(check.mock.calls[0]?.[0]).toMatchObject({ content });
+  await expect(
+    gate.check(
+      { ...action, content: "x".repeat(256 * 1024) },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("too large");
+  expect(check).toHaveBeenCalledOnce();
+  const complete = vi.fn<ReviewModelProvider["complete"]>(async () => ({
+    text: '{"blocked":true,"reason":"review"}',
+    model: { id: "configured" },
+  }));
+  f.ctx
+    .extend({ pluginOwner: { id: "buzz.test", revision: "one" } })
+    .agentProtection.registerModels({
+      label: "Model",
+      models: async () => [],
+      complete,
+    });
+  const request = {
+    ...action,
+    content,
+    agent: { id: pubkey, pubkey, name: "Worker" },
+    runtime: f.agent.type,
+    relay: f.agent.relay,
+    policy: {},
+  };
+  await f.plugin.agentProtection.evaluate(
+    { runtime: "buzz.test", id: "configured" },
+    request,
+    new AbortController().signal,
+  );
+  expect(JSON.parse(complete.mock.calls[0]?.[1].input ?? "{}").content).toBe(
+    content,
+  );
+  await expect(
+    f.plugin.agentProtection.evaluate(
+      { runtime: "buzz.test", id: "configured" },
+      { ...request, content: "x".repeat(768 * 1024) },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("too large");
+  expect(complete).toHaveBeenCalledOnce();
+});

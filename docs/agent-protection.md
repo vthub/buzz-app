@@ -24,7 +24,7 @@ a general network/filesystem policy.
 `check` receives an immutable action (`kind`, `session`, `content`, optional
 `command`) plus host-captured `agent`, `relay`, `runtime` and `policy`. `kind` is
 `context`, `tool` or `tool-result`. Session metadata is not authorization or proof
-of the currently displayed conversation. Enabled inspections are limited to 64 KiB. Optional `phases(policy)` returns a
+of the currently displayed conversation. Complete action evidence is limited to 256 KiB. Optional `phases(policy)` returns a
 boolean for every action kind; it is captured from the native policy at launch.
 Disabled phases still validate the provider lifetime, but send no inspection
 evidence and do not invoke a checker. Omitting it enables every phase. Plugins
@@ -133,3 +133,5 @@ compilation took about three/five minutes respectively; hosted CI timing remains
 to be measured on the pushed head. Human
 acceptance and current UI/interaction checks remain required before marking the
 experimental PR ready.
+
+Full action evidence is bounded to 256 KiB, with separate 768 KiB serialized prompt/record headroom. Nothing is truncated to fit. Fixed classifiers can have smaller input bounds; a failed inspection must pause or deny. These byte limits do not establish classifier tokenization or detection completeness.

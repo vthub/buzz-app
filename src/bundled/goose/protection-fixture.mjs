@@ -206,9 +206,14 @@ try {
     );
     console.log(JSON.stringify({ disabledInputInspection: true }));
   } else {
+    const evidenceTail = "final complete security evidence";
+    const largeInput =
+      "Write the requested fixture file. " +
+      "context ".repeat(12000) +
+      evidenceTail;
     const prompt = rpc("session/prompt", {
       sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "Write the requested fixture file." }],
+      prompt: [{ type: "text", text: largeInput }],
     });
     let deadline;
     await Promise.race([
@@ -232,6 +237,23 @@ try {
             "Write the requested fixture file.",
           ),
       ),
+    );
+    const inspectedInput = decisions.find(
+      (row) =>
+        row.kind === "context" &&
+        JSON.stringify(row.content).includes(evidenceTail),
+    );
+    assert.ok(inspectedInput, "Large model input lost its final evidence");
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(inspectedInput.content)) > 65536,
+    );
+    assert.ok(
+      decisions.some(
+        (row) =>
+          row.kind === "tool" &&
+          JSON.stringify(row.content.conversation).includes(evidenceTail),
+      ),
+      "Tool review lost the large preceding conversation",
     );
     phase = "deny";
     const second = await rpc("session/new", {

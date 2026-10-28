@@ -223,8 +223,8 @@
 +    let bridge = bridge().await?;
 +    let id = uuid::Uuid::new_v4().to_string();
 +    let body = json!({"jsonrpc":"2.0","id":id,"method":"buzz/security/check","params":{"kind":kind,"session":session,"content":content}});
-+    if serde_json::to_vec(&body)?.len() > 65536 {
-+        bail!("Security review context is too large");
++    if serde_json::to_vec(&body)?.len() > 262144 {
++        bail!("Security review context is too large: {} bytes (maximum 262144)", serde_json::to_vec(&body)?.len());
 +    }
 +    let response = bridge
 +        .client
@@ -401,7 +401,7 @@
 +    }
 +    let request: Review = serde_json::from_value(params)?;
 +    if request.prompt.system.is_empty() || request.prompt.input.is_empty()
-+        || request.prompt.system.len() + request.prompt.input.len() > 65536 {
++        || request.prompt.system.len() + request.prompt.input.len() > 786432 {
 +        bail!("Invalid review prompt");
 +    }
 +    let config = crate::config::Config::global();
