@@ -1567,7 +1567,7 @@
          let result = otel
 --- /dev/null
 +++ b/codex-rs/core/src/buzz_security.rs
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,153 @@
 +//! Buzz's mandatory native model and tool admission channel.
 +use anyhow::{Result, anyhow, bail};
 +use serde_json::{Value, json};
@@ -1677,7 +1677,20 @@
 +    }) {
 +        bail!("Protected Codex requires all tools to use local dispatch");
 +    }
-+    check("context", session, request).await
++    // Match Goose's source-level inspection: tool schemas and provider settings
++    // are not conversation text. Keep dynamic instructions and every native item.
++    check("context", session, json!({"source":"instructions","value":request.get("instructions")})).await?;
++    let input = request.get("input").and_then(Value::as_array).ok_or_else(||anyhow!("Protected Codex requires explicit model input"))?;
++    for item in input {
++        if item.get("type").and_then(Value::as_str) == Some("additional_tools") {
++            if !item.get("tools").and_then(Value::as_array).is_some_and(|tools|tools.iter().all(local)) {
++                bail!("Protected Codex requires additional tools to use local dispatch");
++            }
++            continue; // Declarations are validated above, not conversation text.
++        }
++        check("context", session, json!({"source":"message","value":item})).await?;
++    }
++    Ok(())
 +}
 +
 +pub async fn tool(invocation: &crate::tools::context::ToolInvocation) -> Result<()> {

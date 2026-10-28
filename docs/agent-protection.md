@@ -24,7 +24,7 @@ a general network/filesystem policy.
 `check` receives an immutable action (`kind`, `session`, `content`, optional
 `command`) plus host-captured `agent`, `relay`, `runtime` and `policy`. `kind` is
 `context`, `tool` or `tool-result`. Session metadata is not authorization or proof
-of the currently displayed conversation. Complete action evidence is limited to 256 KiB. Optional `phases(policy)` returns a
+of the currently displayed conversation. Each source or combined tool action is limited to 256 KiB. Optional `phases(policy)` returns a
 boolean for every action kind; it is captured from the native policy at launch.
 Disabled phases still validate the provider lifetime, but send no inspection
 evidence and do not invoke a checker. Omitting it enables every phase. Plugins
@@ -62,7 +62,7 @@ packages are not loaded into protected workers. External Attention commands are
 refused for protected agents until that path provides complete enforcement. Tool output/diagnostics/errors
 remain buffered until approved, including safe replay. Model dispatch checks
 cover restored history, compaction and retries. Deferred provider jobs and payload
-rewrite callbacks are refused. An approved shell command is one action; its
+rewrite callbacks are refused. Image-generation and classifier request shapes without explicit conversation messages are refused. An approved shell command is one action; its
 internal syscalls are not separately reviewed.
 
 Goose uses the exact source pin in `runtime/goose-acp.json` with the mandatory
@@ -89,6 +89,17 @@ session reset/fork are refused; protected resumes require the same native policy
 state key and readable prior transcript. Start a new conversation when this
 bounded path cannot continue. Do not describe this evidence as a lossless active
 history snapshot.
+
+Input inspection follows Goose's separation of conversation text from provider
+configuration. Dynamic instructions and every native message are checked as
+individual immutable sources before model dispatch; tool catalogues, schemas and
+model options are not prompt-classifier evidence. Pi uses its native system-text
+renderer to retain dynamic instruction sections without embedded tool declarations.
+Codex validates local dispatch for additional tool declarations before excluding
+those declarations from input inspection. Restored messages and tool results are
+retained; this contract does not adopt Goose's ten-user-message window. An individual
+source failure prevents model dispatch. Tool-action inspection still receives the
+exact arguments and combined preceding native conversation.
 
 All supported protected workers require packaged macOS containment. Reviewer
 choice remains separate from the requesting runtime's enforcement capability.
@@ -134,4 +145,4 @@ to be measured on the pushed head. Human
 acceptance and current UI/interaction checks remain required before marking the
 experimental PR ready.
 
-Full action evidence is bounded to 256 KiB, with separate 768 KiB serialized prompt/record headroom. Nothing is truncated to fit. Fixed classifiers can have smaller input bounds; a failed inspection must pause or deny. These byte limits do not establish classifier tokenization or detection completeness.
+Each input source or combined tool action is bounded to 256 KiB, with separate 768 KiB serialized prompt/record headroom. Nothing is truncated to fit. Fixed classifiers can have smaller input bounds; a failed inspection must pause or deny. These byte limits do not establish classifier tokenization or detection completeness.

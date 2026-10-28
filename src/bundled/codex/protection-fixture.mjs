@@ -48,6 +48,10 @@ const http = createServer(async (req, res) => {
   }
   calls++;
   console.error("MODEL", req.url, "bytes", raw.length);
+  assert.ok(
+    Buffer.byteLength(raw) > 262144,
+    "Fixture must exceed the old whole-request gate",
+  );
   if (calls === 1)
     console.error(
       "TOOLS",
@@ -195,6 +199,13 @@ const start = () =>
     sandbox: "danger-full-access",
     ephemeral: true,
     config,
+    dynamicTools: [
+      {
+        name: "catalog_fixture",
+        description: "Fixed tool documentation. ".repeat(14000),
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
   });
 const turn = async (thread, text) => {
   const completed = new Promise((r) => (ended = r));
@@ -221,6 +232,20 @@ try {
     );
     console.log(JSON.stringify({ disabledInputInspection: true }));
   } else {
+    // Large native tool metadata must not make a tiny incoming message fail.
+    const tiny = await start();
+    phase = "context-off";
+    await turn(tiny.thread.id, "hello");
+    phase = "allow";
+    const tinySource = checks.find(
+      (row) =>
+        row.kind === "context" && JSON.stringify(row.content).includes("hello"),
+    );
+    assert.ok(tinySource);
+    assert.ok(Buffer.byteLength(JSON.stringify(tinySource.content)) < 65536);
+    assert.ok(
+      !JSON.stringify(tinySource.content).includes("Fixed tool documentation."),
+    );
     const evidenceTail = "final complete security evidence";
     const largeInput =
       "Write the requested fixture file. " +

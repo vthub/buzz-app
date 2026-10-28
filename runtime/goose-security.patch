@@ -150,7 +150,7 @@
  pub mod agents;
 --- /dev/null
 +++ b/crates/goose/src/buzz_security.rs
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,308 @@
 +//! Mandatory Buzz admission, enabled only by the native protected launcher.
 +//! It sits below optional Goose hooks and never interprets a model as authority.
 +use crate::config::GooseMode;
@@ -280,7 +280,12 @@
 +        messages: &[Message],
 +        tools: &[Tool],
 +    ) -> Result<MessageStream, ProviderError> {
-+        check("context", &self.session, serde_json::json!({"system":system,"messages":messages,"model":model_config,"tools":tools})).await.map_err(|e| goose_providers::errors::ProviderError::ExecutionError(e.to_string()))?;
++        // Inspect each native source before dispatch, rather than classifying
++        // model configuration and the tool catalogue as one conversation blob.
++        check("context", &self.session, json!({"source":"instructions","value":system})).await.map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
++        for message in messages {
++            check("context", &self.session, json!({"source":"message","value":message})).await.map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
++        }
 +        self.inner
 +            .stream(model_config, system, messages, tools)
 +            .await
@@ -292,7 +297,12 @@
 +        messages: &[Message],
 +        tools: &[Tool],
 +    ) -> Result<(Message, ProviderUsage), ProviderError> {
-+        check("context", &self.session, serde_json::json!({"system":system,"messages":messages,"model":model_config,"tools":tools})).await.map_err(|e| goose_providers::errors::ProviderError::ExecutionError(e.to_string()))?;
++        // Inspect each native source before dispatch, rather than classifying
++        // model configuration and the tool catalogue as one conversation blob.
++        check("context", &self.session, json!({"source":"instructions","value":system})).await.map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
++        for message in messages {
++            check("context", &self.session, json!({"source":"message","value":message})).await.map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
++        }
 +        self.inner
 +            .complete(model_config, system, messages, tools)
 +            .await

@@ -855,28 +855,33 @@ export class ClaudeProcess {
             throw error;
           });
         this.protectedHistory = structuredClone(history);
-        await this.protection.gate.check(
-          {
-            kind: tool
-              ? "tool"
-              : ["UserPromptSubmit", "SessionStart"].includes(
-                    String(input.hook_event_name),
-                  )
-                ? "context"
-                : "tool-result",
-            session: this.sessionId ?? "initial",
-            content: {
-              ...(tool
-                ? { title: input.tool_name, arguments: input.tool_input }
-                : {}),
-              instructions: this.protectedInstructions,
-              conversation: history,
-              events: structuredClone(this.protectedEvents),
-              input,
-            },
-          },
-          this.protectionLifetime.signal,
-        );
+        const content = {
+          ...(tool
+            ? { title: input.tool_name, arguments: input.tool_input }
+            : {}),
+          instructions: this.protectedInstructions,
+          conversation: history,
+          events: structuredClone(this.protectedEvents),
+          input,
+        };
+        // Tool authority needs the combined conversation. Injection detection
+        // inspects native sources individually, without duplicating the envelope.
+        const sources = tool
+          ? [content]
+          : [
+              { source: "instructions", value: this.protectedInstructions },
+              ...[
+                ...(Array.isArray(history) ? history : [history]),
+                ...this.protectedEvents,
+              ].map((value) => ({ source: "message", value })),
+              { source: "hook", value: input },
+            ];
+        for (const source of sources) {
+          await this.protection.gate.check(
+            { kind, session: this.sessionId ?? "initial", content: source },
+            this.protectionLifetime.signal,
+          );
+        }
         this.protectionLifetime.signal.throwIfAborted();
         response = success(
           tool

@@ -20,6 +20,7 @@ import {
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
+  getSystemMessageText,
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
@@ -96,22 +97,30 @@ export function protectModels(models, inspect, conversationFor) {
           transformHeaders: async (assembled) => {
             signal?.throwIfAborted();
             const session = await conversationFor(settings.sessionId);
-            await inspect(
-              {
-                kind: "context",
-                session: String(session),
-                content: {
-                  model: {
-                    provider: selected.provider,
-                    id: selected.id,
-                    api: selected.api,
-                  },
-                  request: content,
-                  settings,
+            if (!Array.isArray(content.messages))
+              throw new Error(
+                "Protected Pi requires explicit conversation messages",
+              );
+            // Provider settings and tool schemas are not conversation text.
+            // Keep dynamic instructions and every native message as distinct sources.
+            for (const [source, value] of [
+              ["instructions", content.systemPrompt ?? ""],
+              ...content.messages.map((message) => [
+                "message",
+                message.role === "system"
+                  ? { role: "system", content: getSystemMessageText(message) }
+                  : message,
+              ]),
+            ]) {
+              await inspect(
+                {
+                  kind: "context",
+                  session: String(session),
+                  content: { source, value },
                 },
-              },
-              signal,
-            );
+                signal,
+              );
+            }
             signal?.throwIfAborted();
             return assembled;
           },

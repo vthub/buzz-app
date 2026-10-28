@@ -127,11 +127,11 @@ const api={conversationId:1,output:value=>emitted.push(value),diagnostic:value=>
 const wrapped=protectTool({name:'throw',execute:async(_args,api)=>{api.output('partial');api.diagnostic({message:'diagnostic'});await api.details({secret:'details'});throw new Error('private error');}},async action=>{seen=action;if(action.kind==='tool-result')throw new Error('denied');});
 await assert.rejects(wrapped.execute({},api,{abortSignal:new AbortController().signal}),/denied/);assert.deepEqual(emitted,[]);assert.ok(JSON.stringify(seen).includes('private error'));result.thrownError=true;
 const gate=deferred(),entered=deferred();let captured;
-const checked=protectModels(models,async()=>{entered.resolve();await gate.promise;},async id=>{if(id!=='known')throw new Error('unknown session');return 1;});
-const input={messages:[{role:'user',content:'reviewed',timestamp:1}]};const model=structuredClone(faux.getModel());
+const sources=[];const checked=protectModels(models,async action=>{sources.push(action.content);entered.resolve();await gate.promise;},async id=>{if(id!=='known')throw new Error('unknown session');return 1;});
+const input={messages:[{role:'system',content:'dynamic instructions',sections:{memory:'untrusted memory text'},toolsAdded:[{name:'schema_fixture',description:'tool metadata '.repeat(25000),parameters:{type:'object',properties:{}}}],timestamp:0},{role:'user',content:'reviewed',timestamp:1}]};const model=structuredClone(faux.getModel());
 faux.setResponses([(context,_opts,_state,actual)=>{captured={context,actual};return fauxAssistantMessage('ok');}]);
-const reply=checked.completeSimple(model,input,{sessionId:'known'});await entered.promise;input.messages[0].content='mutated';model.id='mutated';gate.resolve();await reply;
-assert.equal(captured.context.messages[0].content,'reviewed');assert.notEqual(captured.actual.id,'mutated');result.exactModel=true;
+const reply=checked.completeSimple(model,input,{sessionId:'known'});await entered.promise;input.messages[1].content='mutated';model.id='mutated';gate.resolve();await reply;
+assert.equal(captured.context.messages[1].content,'reviewed');assert.ok(JSON.stringify(sources).includes('untrusted memory text'));assert.ok(!JSON.stringify(sources).includes('tool metadata '));assert.ok(sources.every(source=>Buffer.byteLength(JSON.stringify(source))<65536));assert.notEqual(captured.actual.id,'mutated');result.exactModel=true;
 const count=faux.state.callCount;await checked.completeSimple(faux.getModel(),input,{sessionId:'unknown'});assert.equal(faux.state.callCount,count);result.unknownSession=true;
 for(const method of ['streamDeferred','fetchDeferred','cancelDeferred'])assert.throws(()=>checked[method](faux.getModel(),{}),/does not support deferred/);
 assert.throws(()=>checked.streamSimple(faux.getModel(),input,{onPayload:()=>({})}),/payload override/);result.closedOverrides=true;

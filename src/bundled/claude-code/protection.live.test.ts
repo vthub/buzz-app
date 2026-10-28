@@ -185,12 +185,15 @@ it.skipIf(!binary)(
           assertAvailable() {},
           async check(action: ProtectionAction, signal: AbortSignal) {
             checks.push(action);
-            const input = (
-              action.content as { input?: { hook_event_name?: string } }
-            ).input;
+            const input = action.content as {
+              input?: { hook_event_name?: string };
+              source?: string;
+              value?: { hook_event_name?: string };
+            };
+            const hook = input.source === "hook" ? input.value : input.input;
             if (
               phase === "resume" &&
-              input?.hook_event_name === "UserPromptSubmit"
+              hook?.hook_event_name === "UserPromptSubmit"
             ) {
               resumeEntered();
               await resumeHeld;
@@ -266,6 +269,7 @@ it.skipIf(!binary)(
       phase = "resume";
       if (!worker.sessionId)
         throw new Error("Claude did not report its native session");
+      const resumedChecksStart = checks.length;
       const resumed = await ClaudeProcess.start(nativeSpawn, {
         ...launch,
         resume: worker.sessionId,
@@ -282,18 +286,13 @@ it.skipIf(!binary)(
       ]);
       // Initialization returned before this hook, so its ACK deadline is gone.
       expect(resumed.running).toBe(true);
-      expect(
-        checks.some(
-          (action) =>
-            action.kind === "context" &&
-            JSON.stringify(action.content).includes(
-              "Write the requested fixture file.",
-            ) &&
-            JSON.stringify(action.content).includes(
-              "Continue the reviewed conversation.",
-            ),
-        ),
-      ).toBe(true);
+      const resumedEvidence = JSON.stringify(
+        checks
+          .slice(resumedChecksStart)
+          .filter((action) => action.kind === "context"),
+      );
+      expect(resumedEvidence).toContain("Write the requested fixture file.");
+      expect(resumedEvidence).toContain("Continue the reviewed conversation.");
       resumeRelease();
       expect(await resumedTurn, stderr).toEqual({ ok: true });
       phase = "deny";
