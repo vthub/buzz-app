@@ -134,6 +134,37 @@ fn normalized_bundle_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Where a move stages its copy before renaming it over `target`:
+/// `/Applications/.Buzz.app.staging`. Beside the target, so the final rename
+/// is same-volume and atomic; hidden, and not an `.app`, so Launch Services
+/// never registers it. The name is fixed because the single-instance guard
+/// lets only one move run at a time, so anything already there was left by
+/// an earlier move that was interrupted.
+fn staging_path(target: &Path) -> PathBuf {
+    let mut name = std::ffi::OsString::from(".");
+    name.push(target.file_name().unwrap_or_default());
+    name.push(".staging");
+    target.with_file_name(name)
+}
+
+/// Remove a leftover staging copy so the next copy starts from nothing.
+/// Nothing to remove is fine. A leftover that can't be removed is an error:
+/// `ditto` would merge into it, and the stale files would break the new
+/// copy's code signature.
+fn clear_staging(staging: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(staging) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(std::io::Error::new(
+            error.kind(),
+            format!(
+                "failed to remove leftover staging copy {}: {error}",
+                staging.display()
+            ),
+        )),
+    }
+}
+
 /// Version identity read from a bundle's `Contents/Info.plist`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleVersion {
@@ -536,23 +567,18 @@ mod macos {
         let target = installed_copy_path(bundle_path)
             .ok_or_else(|| std::io::Error::other("app bundle path has no file name"))?;
 
-        // Stage the copy under a hidden temporary name on the same volume as
-        // the target, so a failed or interrupted `ditto` (disk full, killed
+        // Stage the copy under a hidden name on the same volume as the
+        // target, so a failed or interrupted `ditto` (disk full, killed
         // mid-copy) can never leave a working installed copy trashed and the
         // target a half-written bundle. Only once the copy fully succeeds do
         // we trash the old copy and rename the staged one into place — an
         // atomic, same-volume rename. The move the dialog promised therefore
         // either happens completely or not at all.
-        let staging = target.with_file_name(format!(
-            ".{}.{}.staging",
-            target.file_name().unwrap_or_default().to_string_lossy(),
-            std::process::id()
-        ));
-        // Clear any leftover staging bundle from a previously interrupted run
-        // so `ditto` writes into a clean location rather than merging into it.
-        if staging.exists() {
-            let _ = std::fs::remove_dir_all(&staging);
-        }
+        let staging = staging_path(&target);
+        // At most one staging copy exists. One left by an interrupted earlier
+        // move is removed first; if it can't be, the move stops here rather
+        // than copying into it.
+        clear_staging(&staging)?;
 
         // `ditto` is the macOS-blessed way to copy an app bundle while
         // preserving its structure and metadata.
@@ -881,6 +907,63 @@ mod tests {
             normalized_bundle_path(Path::new("/Applications/Missing.app")),
             PathBuf::from("/Applications/Missing.app")
         );
+    }
+
+    #[test]
+    fn staging_path_is_hidden_fixed_and_beside_the_target() {
+        // No pid or other per-run part, so a later move finds an earlier
+        // move's leftover; never an `.app`, so Launch Services ignores it.
+        assert_eq!(
+            staging_path(Path::new("/Applications/Buzz.app")),
+            PathBuf::from("/Applications/.Buzz.app.staging")
+        );
+        assert_eq!(
+            staging_path(Path::new("/Applications/Buzz Preview.app")),
+            PathBuf::from("/Applications/.Buzz Preview.app.staging")
+        );
+    }
+
+    #[test]
+    fn clear_staging_removes_a_leftover_copy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let staging = dir.path().join(".Buzz.app.staging");
+        std::fs::create_dir_all(staging.join("Contents/MacOS")).expect("create leftover");
+        std::fs::write(staging.join("Contents/MacOS/Buzz"), b"stale").expect("write leftover");
+
+        clear_staging(&staging).expect("clear leftover");
+
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn clear_staging_accepts_nothing_to_clear() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        clear_staging(&dir.path().join(".Buzz.app.staging")).expect("nothing to clear");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clear_staging_fails_when_a_leftover_cannot_be_removed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let staging = dir.path().join(".Buzz.app.staging");
+        let contents = staging.join("Contents");
+        std::fs::create_dir_all(&contents).expect("create leftover");
+        std::fs::write(contents.join("x"), b"stale").expect("write leftover");
+        // Entries of a read-only directory can't be unlinked, even by its owner.
+        std::fs::set_permissions(&contents, std::fs::Permissions::from_mode(0o555))
+            .expect("lock leftover");
+        let result = clear_staging(&staging);
+        std::fs::set_permissions(&contents, std::fs::Permissions::from_mode(0o755))
+            .expect("unlock leftover");
+
+        let error = result.expect_err("a leftover that can't be removed stops the move");
+        assert!(
+            error.to_string().contains(&staging.display().to_string()),
+            "{error}"
+        );
+        assert!(contents.join("x").exists());
     }
 
     fn version(short: &str, build: &str) -> BundleVersion {
