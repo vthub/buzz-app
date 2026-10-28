@@ -266,7 +266,9 @@ since the chooser's "Will not be notified" row was never shown. Sending while
 a mention is pending waits for it, through such an extension; if a mention the
 send waited for returns to prose, the client MUST NOT send in that same action,
 since the user saw the name held and would notify no one: it keeps the draft,
-says which name matched no one, and the next send sends the text. A pending
+says which name was not tagged and why (it matched no one, or the match could
+not be tagged here, would exceed the recipient limit or would make the message
+too long), and the next send sends the text. A pending
 mention is never a recipient or a reference (section 8).
 
 ## 6. List stability (desktop behavior; not in the fixtures)

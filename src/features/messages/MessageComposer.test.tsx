@@ -10795,11 +10795,15 @@ it("returns a pending mention to prose when its resolution is not a well-formed 
 });
 
 /** `@honey ` held, Send pressed while it is pending. */
-async function sendWhilePending(options: Partial<MessageComposerProps> = {}) {
+async function sendWhilePending(
+  options: Partial<MessageComposerProps> = {},
+  prepare?: (h: ReturnType<typeof mountPendingMention>) => void,
+) {
   const h = mountPendingMention(options);
   h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
   const outcome = deferred<MentionRecipient | null>();
   h.hold("honey", outcome.promise);
+  prepare?.(h);
   h.submit();
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
@@ -10842,6 +10846,84 @@ it("sending while a mention is pending keeps the draft when it returns to prose,
   );
   expect(h.input()).toHaveValue("");
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+// The resolver found a recipient, but the host would not tag it: the alert
+// says why, not that the name matched no one.
+it.each([
+  {
+    refusal: "32 recipients are already tagged",
+    resolution: first,
+    prepare: (h: ReturnType<typeof mountPendingMention>) =>
+      act(() => {
+        h.input().insertText(
+          "",
+          Array.from({ length: 32 }, () => second),
+        );
+      }),
+    alert:
+      "@honey could not be tagged: a message can tag at most 32 recipients. Send again to send it as text.",
+  },
+  {
+    refusal: "the recipient is not admitted here",
+    resolution: { pubkey: "e".repeat(64), name: "Eve" },
+    // The destination became a Solo chat meanwhile: outsiders are not admitted.
+    prepare: (h: ReturnType<typeof mountPendingMention>) =>
+      Object.assign(h.session, {
+        channels: { list: () => soloList, subscribeList: () => () => {} },
+      }),
+    alert: "@honey could not be tagged here. Send again to send it as text.",
+  },
+  {
+    refusal: "its current name would overrun the length limit",
+    resolution: { pubkey: first.pubkey, name: "H".repeat(16000) },
+    prepare: undefined,
+    alert:
+      "@honey could not be tagged: the message would be too long. Send again to send it as text.",
+  },
+])(
+  "sending while a mention is pending says why when it resolves but $refusal",
+  async ({ resolution, prepare, alert }) => {
+    const h = await sendWhilePending({}, prepare);
+    await act(async () => h.outcome.resolve(resolution));
+    expect(screen.getByRole("alert")).toHaveTextContent(alert);
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.input().value).toMatch(/^@honey /);
+    expect(h.chip("honey")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  },
+);
+
+it("sending while two mentions are pending says why each was not tagged", async () => {
+  const h = mountPendingMention();
+  const unmatched = deferred<MentionRecipient | null>();
+  const long = deferred<MentionRecipient | null>();
+  h.hold("honey", unmatched.promise);
+  act(() => {
+    h.input().insertText("@eve");
+  });
+  h.resolve.mockImplementation(() => long.promise);
+  act(() => {
+    h.publish()({
+      items: [],
+      spacePending: { name: "eve", resolve: h.resolve },
+    });
+  });
+  fireEvent.keyDown(h.input(), { key: " " });
+  expect(h.chip("eve")).not.toBeNull();
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  await act(async () => {
+    unmatched.resolve(null);
+    long.resolve({ pubkey: first.pubkey, name: "H".repeat(16000) });
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "@honey could not be matched to a person or agent. @eve could not be tagged: the message would be too long. Send again to send them as text.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@honey @eve ");
 });
 
 it("sending while a mention is pending asks for a recipient when it returns to prose and one is required", async () => {

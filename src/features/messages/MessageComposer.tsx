@@ -208,6 +208,14 @@ function wellFormedRecipient(
     !!name.trim()
   );
 }
+/** Why a pending mention returned to prose, as the send it held tells it. */
+const pendingRefusals = {
+  unmatched: "could not be matched to a person or agent",
+  unavailable: "could not be tagged here",
+  limit: "could not be tagged: a message can tag at most 32 recipients",
+  length: "could not be tagged: the message would be too long",
+} as const;
+type PendingRefusal = { name: string; reason: keyof typeof pendingRefusals };
 function subscribeRecovery(
   session: ComposerSession,
   key: string,
@@ -1220,8 +1228,8 @@ function Composer({
       {
         resolve: CompletionPending["resolve"];
         controller?: AbortController | undefined;
-        /** Settles with the typed name when the chip returned to prose. */
-        settled?: Promise<string | undefined> | undefined;
+        /** Settles with the typed name and why when the chip returned to prose. */
+        settled?: Promise<PendingRefusal | undefined> | undefined;
       }
     >(),
   );
@@ -1234,15 +1242,22 @@ function Composer({
     if (!entry || signal.aborted) return;
     // Exactly what Tab would have inserted: well formed (the resolution is a
     // provider's answer), admitted now, within the cap.
+    const reason: PendingRefusal["reason"] | undefined = !wellFormedRecipient(
+      recipient,
+    )
+      ? "unmatched"
+      : !mentionAdmission(
+            session,
+            channelId,
+            agentChoices,
+            currentRoster.current,
+          )(recipient.pubkey)
+        ? "unavailable"
+        : valueRef.current.recipients.length >= 32
+          ? "limit"
+          : undefined;
     const accepted =
-      wellFormedRecipient(recipient) &&
-      mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        currentRoster.current,
-      )(recipient.pubkey) &&
-      valueRef.current.recipients.length < 32
+      recipient && !reason
         ? { pubkey: recipient.pubkey, name: recipient.name }
         : null;
     const name = valueRef.current.pending?.find((chip) => chip.id === id)?.name;
@@ -1250,14 +1265,15 @@ function Composer({
     // still pending until the replay, so the entry stays until it lands.
     return Promise.resolve(
       input.current?.settlePendingMention(id, accepted) ?? false,
-    ).then((applied) => settled(id, accepted, applied, name ?? ""));
+    ).then((applied) => settled(id, accepted, applied, name ?? "", reason));
   }
   function settled(
     id: string,
     accepted: MentionRecipient | null,
     applied: boolean,
     name: string,
-  ): string | undefined {
+    reason: PendingRefusal["reason"] | undefined,
+  ): PendingRefusal | undefined {
     const entry = pendingMentions.current.get(id);
     if (!entry) return;
     if (!applied) {
@@ -1276,7 +1292,8 @@ function Composer({
       rememberMention(session, channelId, accepted.pubkey);
       return;
     }
-    return name;
+    // Accepted but written as text: its current name overran the length limit.
+    return { name, reason: reason ?? "length" };
   }
   function resolvePendingMention(id: string) {
     const entry = pendingMentions.current.get(id);
@@ -1296,12 +1313,12 @@ function Composer({
    * a chip whose name only longer known names kept from selecting extends
    * over the words typed after it when they complete one, and that name is
    * resolved under the same signal. Anything else returns it to prose, and
-   * the promise settles with the typed name it returned. */
+   * the promise settles with the typed name it returned and why. */
   async function resolveChip(
     id: string,
     resolve: CompletionPending["resolve"],
     signal: AbortSignal,
-  ): Promise<string | undefined> {
+  ): Promise<PendingRefusal | undefined> {
     const outcome = await resolve(signal).catch(() => null);
     if (signal.aborted) return;
     if (!outcome || !("continued" in outcome))
@@ -1822,7 +1839,9 @@ function Composer({
       sendAttempt.current = wait;
       setSending(true);
       setError(undefined);
-      let outcomes: PromiseSettledResult<string | undefined>[] | undefined;
+      let outcomes:
+        | PromiseSettledResult<PendingRefusal | undefined>[]
+        | undefined;
       try {
         outcomes =
           (await Promise.race([
@@ -1846,17 +1865,27 @@ function Composer({
       if (wait.signal.aborted || !live.current || !permitted.current) return;
       // A chip this send waited on that returned to prose would go out as a
       // name that notifies no one, after the user saw it held. Keep the
-      // draft and say so; sending again sends it as text, since nothing is
-      // pending by then.
+      // draft and say why, so the user can fix it (a recipient over the cap)
+      // or send again to send it as text, since nothing is pending by then.
       const prose = (outcomes ?? []).flatMap((outcome) =>
         outcome.status === "fulfilled" && outcome.value ? [outcome.value] : [],
       );
       if (prose.length) {
-        const names = prose.map((name) => `@${name}`).join(", ");
+        const why = Object.entries(pendingRefusals).flatMap(
+          ([reason, says]) => {
+            const names = prose
+              .filter((chip) => chip.reason === reason)
+              .map((chip) => `@${chip.name}`);
+            return names.length ? [`${names.join(", ")} ${says}.`] : [];
+          },
+        );
         setError(
-          needsRecipient && !valueRef.current.recipients.length
-            ? `${names} could not be matched to a person or agent. ${recipientHint}.`
-            : `${names} could not be matched to a person or agent. Send again to send ${prose.length > 1 ? "them" : "it"} as text.`,
+          [
+            ...why,
+            needsRecipient && !valueRef.current.recipients.length
+              ? `${recipientHint}.`
+              : `Send again to send ${prose.length > 1 ? "them" : "it"} as text.`,
+          ].join(" "),
         );
         return;
       }
