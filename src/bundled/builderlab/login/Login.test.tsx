@@ -40,14 +40,20 @@ it("sign-out clears the credential and restores the sign-in action", async () =>
     </StrictMode>,
   );
   const user = userEvent.setup();
+  expect(screen.getByText(/Connect your Builderlab account/)).toBeVisible();
   await user.click(
     screen.getByRole("button", { name: "Sign in with Builderlab" }),
   );
   expect(await screen.findByRole("button", { name: "Sign out" })).toBeEnabled();
+  expect(
+    screen.queryByText(/Connect your Builderlab account/),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText(/stays in memory until you sign out/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Sign out" }));
   expect(
     screen.getByRole("button", { name: "Sign in with Builderlab" }),
   ).toBeEnabled();
+  expect(screen.getByText(/Connect your Builderlab account/)).toBeVisible();
   expect(() => session.credential()).toThrow("Sign in");
 });
 it("shows a signed-in confirmation when email is unavailable", async () => {

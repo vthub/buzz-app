@@ -27,18 +27,16 @@ export function Login({
     },
     [session],
   );
+  const intro =
+    state.status === "signed-in"
+      ? "Your credential stays in memory until you sign out or close Buzz."
+      : "Connect your Builderlab account. Your credential stays in memory until you sign out or close Buzz.";
   return (
     <div data-buzz-ui="" className="flex flex-col items-start gap-4">
       {showHeading ? (
-        <Header
-          title="Builderlab"
-          subtitle="Connect your Builderlab account. Your credential stays in memory until you sign out or close Buzz."
-        />
+        <Header title="Builderlab" subtitle={intro} />
       ) : (
-        <p className="m-0 text-body-sm text-secondary">
-          Connect your Builderlab account. Your credential stays in memory until
-          you sign out or close Buzz.
-        </p>
+        <p className="m-0 text-body-sm text-secondary">{intro}</p>
       )}
       {!available ? (
         <p role="status" className="text-body-sm text-secondary">
