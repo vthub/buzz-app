@@ -10,7 +10,7 @@ const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 struct Builderlab {
     /// The exact origin, which host grants and sign-in checks compare.
     origin: String,
-    /// The whole URL without a trailing slash, which keeps a deployment path
+    /// The whole URL less one trailing slash, which keeps a deployment path
     /// for routes, as the frontend's `oauthTarget` does.
     base: String,
 }
@@ -35,7 +35,12 @@ fn builderlab(local: &Path, process: Option<String>) -> Result<Builderlab, &'sta
     }
     Ok(Builderlab {
         origin: url.origin().ascii_serialization(),
-        base: url.as_str().trim_end_matches('/').into(),
+        // One terminal slash, exactly as `oauthTarget` removes it.
+        base: url
+            .as_str()
+            .strip_suffix('/')
+            .unwrap_or(url.as_str())
+            .into(),
     })
 }
 
@@ -84,6 +89,11 @@ mod tests {
         assert_eq!(
             base("https://app.builderlab.xyz/"),
             "https://app.builderlab.xyz"
+        );
+        // Only one slash goes, so sign-in and decisions share the same path.
+        assert_eq!(
+            base("https://login.example:8443/deployment//"),
+            "https://login.example:8443/deployment/"
         );
         assert_eq!(base(""), "");
     }

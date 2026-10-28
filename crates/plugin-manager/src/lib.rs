@@ -214,7 +214,7 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 /// The `BUZZ_BUILDERLAB_URL` build input's origin, or empty when unconfigured.
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
-/// The `BUZZ_BUILDERLAB_URL` build input without a trailing slash, keeping any
+/// The `BUZZ_BUILDERLAB_URL` build input less one trailing slash, keeping any
 /// deployment path, or empty when unconfigured. Routes go under it.
 pub const BUILDERLAB_BASE: &str = env!("BUZZ_BUILDERLAB_BASE");
 /// The Apps Platform control plane of the tenant whose Builderlab sign-in
