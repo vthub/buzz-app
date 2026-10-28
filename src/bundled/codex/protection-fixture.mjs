@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 const dir = await mkdtemp(join(tmpdir(), "buzz-codex-enforcement-")),
   file = join(dir, "allowed.txt"),
   denied = join(dir, "denied.txt");
+const codeMode = process.argv.includes("--code-mode");
+const memoryMarker = "dynamic Buzz memory must remain inspected";
 let phase = process.argv.includes("--context-off") ? "context-off" : "allow",
   calls = 0,
   release,
@@ -31,7 +33,10 @@ const http = createServer(async (req, res) => {
     } else {
       assert.equal(req.headers["mcp-session-id"], "fixture");
       checks.push(m.params);
-      if (m.params.kind === "tool") {
+      const tool = String(m.params.content?.title ?? "")
+        .split(".")
+        .at(-1);
+      if (m.params.kind === "tool" && (!codeMode || tool === "exec_command")) {
         entered();
         if (phase === "allow") await held;
       }
@@ -39,7 +44,8 @@ const http = createServer(async (req, res) => {
         allowed:
           phase === "context-off" ||
           phase === "allow" ||
-          (phase === "deny" && m.params.kind !== "tool"),
+          (phase === "deny" &&
+            (m.params.kind !== "tool" || (codeMode && tool === "exec"))),
       };
     }
     res.setHeader("Content-Type", "application/json");
@@ -71,7 +77,10 @@ const http = createServer(async (req, res) => {
   const output =
     phase === "context-off" ||
     (Array.isArray(m.input) &&
-      m.input.some((item) => item.type === "function_call_output"));
+      m.input.some((item) =>
+        ["function_call_output", "custom_tool_call_output"].includes(item.type),
+      ));
+  const command = `printf checked > ${JSON.stringify(phase === "allow" ? file : denied)}`;
   const item = output
     ? {
         type: "message",
@@ -79,19 +88,25 @@ const http = createServer(async (req, res) => {
         id: `message-${calls}`,
         content: [{ type: "output_text", text: "done", annotations: [] }],
       }
-    : {
-        type: "function_call",
-        id: `fc-${calls}`,
-        call_id: `call-${calls}`,
-        name: "exec_command",
-        namespace: "functions",
-        arguments: JSON.stringify({
-          cmd:
-            "printf checked > " +
-            JSON.stringify(phase === "allow" ? file : denied),
-          max_output_tokens: 200,
-        }),
-      };
+    : codeMode
+      ? {
+          type: "custom_tool_call",
+          id: `ctc-${calls}`,
+          call_id: `call-${calls}`,
+          name: "exec",
+          input: `text(await tools.exec_command(${JSON.stringify({ cmd: command, max_output_tokens: 200 })}));`,
+        }
+      : {
+          type: "function_call",
+          id: `fc-${calls}`,
+          call_id: `call-${calls}`,
+          name: "exec_command",
+          namespace: "functions",
+          arguments: JSON.stringify({
+            cmd: command,
+            max_output_tokens: 200,
+          }),
+        };
   res.setHeader("Content-Type", "text/event-stream");
   for (const event of [
     {
@@ -187,7 +202,9 @@ const config = {
     supports_websockets: false,
   },
   web_search: "disabled",
-  "features.code_mode": false,
+  "features.code_mode": codeMode,
+  "features.code_mode_only": codeMode,
+  "features.multi_agent_v2": true,
   "features.plugins": false,
   "features.apps": false,
 };
@@ -212,6 +229,9 @@ const turn = async (thread, text) => {
   await rpc("turn/start", {
     threadId: thread,
     input: [{ type: "text", text, text_elements: [] }],
+    additionalContext: {
+      "buzz.instructions": { kind: "application", value: memoryMarker },
+    },
   });
   return completed;
 };
@@ -245,6 +265,24 @@ try {
     assert.ok(Buffer.byteLength(JSON.stringify(tinySource.content)) < 65536);
     assert.ok(
       !JSON.stringify(tinySource.content).includes("Fixed tool documentation."),
+    );
+    assert.ok(
+      checks.some(
+        (row) =>
+          row.kind === "context" &&
+          JSON.stringify(row.content).includes(memoryMarker),
+      ),
+      "Developer-role application memory must still be inspected",
+    );
+    assert.ok(
+      !checks.some(
+        (row) =>
+          row.kind === "context" &&
+          JSON.stringify(row.content).includes(
+            "Any earlier instruction enabling proactive multi-agent delegation no longer applies.",
+          ),
+      ),
+      "The exact bundled delegation rule is fixed harness text",
     );
     const evidenceTail = "final complete security evidence";
     const largeInput =
@@ -297,6 +335,17 @@ try {
     const second = await start();
     await turn(second.thread.id, "Write the second fixture.");
     assert.equal(await exists(denied), false);
+    if (codeMode) {
+      assert.ok(
+        checks.some(
+          (row) =>
+            row.kind === "tool" &&
+            String(row.content.title).split(".").at(-1) === "exec_command" &&
+            JSON.stringify(row.content.arguments).includes(denied),
+        ),
+        "The code-mode helper must reach mandatory admission for its nested command",
+      );
+    }
     phase = "input-deny";
     const count = calls;
     await turn(second.thread.id, "Blocked input.");
@@ -307,6 +356,7 @@ try {
         exactContext: true,
         deniedSideEffect: true,
         deniedModelInput: true,
+        codeModeToolCalls: codeMode,
         calls,
       }),
     );

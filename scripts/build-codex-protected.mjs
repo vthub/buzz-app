@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareCodexV8 } from "./codex-v8.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const pin = JSON.parse(
   readFileSync(join(root, "runtime/codex-security.json"), "utf8"),
@@ -29,19 +30,28 @@ const windows = triple
 const suffix = windows ? ".exe" : "";
 const source = join(root, "target/codex-protected-src");
 const target = join(root, "target/codex-protected-build");
-const destination = join(
-  root,
-  "src-tauri/resources/bin",
-  `codex-app-server-protected${suffix}`,
-);
+// The pinned app server resolves the code-mode host beside its own executable.
+const binaries = [
+  ["codex-app-server", "codex-app-server-protected"],
+  ["codex-code-mode-host", "codex-code-mode-host"],
+];
+const destination = join(root, "src-tauri/resources/bin");
 const stampPath = join(target, "staged.json");
 const stamp = JSON.stringify({
   ...pin,
   patch: createHash("sha256").update(readFileSync(patch)).digest("hex"),
   profile,
   triple,
+  binaries,
+  v8: "codex-verified-sandbox",
 });
-if (existsSync(destination) && read(stampPath) === stamp) process.exit(0);
+if (
+  binaries.every(([, name]) =>
+    existsSync(join(destination, `${name}${suffix}`)),
+  ) &&
+  read(stampPath) === stamp
+)
+  process.exit(0);
 mkdirSync(source, { recursive: true });
 run("git", ["init", "--quiet"]);
 if (
@@ -62,6 +72,7 @@ run("git", ["checkout", "--quiet", "--force", "--detach", pin.revision]);
 rmSync(join(source, "codex-rs/core/src/buzz_security.rs"), { force: true });
 run("git", ["apply", "--check", patch]);
 run("git", ["apply", patch]);
+const v8 = prepareCodexV8({ source, target, triple, run });
 run(
   "cargo",
   [
@@ -71,35 +82,45 @@ run(
     "codex-rs/Cargo.toml",
     "-p",
     "codex-app-server",
+    "-p",
+    "codex-code-mode-host",
     "--profile",
     profile,
     ...(triple ? ["--target", triple] : []),
   ],
-  { ...process.env, CARGO_TARGET_DIR: target, CARGO_PROFILE_DEV_DEBUG: "0" },
+  {
+    ...process.env,
+    CARGO_TARGET_DIR: target,
+    CARGO_PROFILE_DEV_DEBUG: "0",
+    ...v8,
+  },
 );
-const built = join(
+const builtDirectory = join(
   target,
   triple ?? "",
   profile === "dev" ? "debug" : profile,
-  `codex-app-server${suffix}`,
 );
 if (process.platform === "darwin" && (!triple || triple.includes("apple"))) {
-  for (const line of run("otool", ["-L", built]).split("\n").slice(1)) {
-    const library = line.trim().split(" (compatibility version")[0];
-    if (
-      library &&
-      !library.startsWith("/usr/lib/") &&
-      !library.startsWith("/System/Library/")
-    )
-      throw new Error(
-        `Protected Codex links a library Macs do not ship: ${library}`,
-      );
+  for (const [name] of binaries) {
+    const built = join(builtDirectory, `${name}${suffix}`);
+    for (const line of run("otool", ["-L", built]).split("\n").slice(1)) {
+      const library = line.trim().split(" (compatibility version")[0];
+      if (
+        library &&
+        !library.startsWith("/usr/lib/") &&
+        !library.startsWith("/System/Library/")
+      )
+        throw new Error(`${name} links a library Macs do not ship: ${library}`);
+    }
   }
 }
-mkdirSync(join(root, "src-tauri/resources/bin"), { recursive: true });
-copyFileSync(built, `${destination}.new`);
-chmodSync(`${destination}.new`, 0o755);
-renameSync(`${destination}.new`, destination);
+mkdirSync(destination, { recursive: true });
+for (const [name, stagedName] of binaries) {
+  const staged = join(destination, `${stagedName}${suffix}`);
+  copyFileSync(join(builtDirectory, `${name}${suffix}`), `${staged}.new`);
+  chmodSync(`${staged}.new`, 0o755);
+  renameSync(`${staged}.new`, staged);
+}
 for (const name of ["LICENSE", "NOTICE"]) {
   const path = join(source, name);
   if (existsSync(path))

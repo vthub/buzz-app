@@ -8,6 +8,7 @@ const dir = await mkdtemp(join(tmpdir(), "buzz-goose-enforcement-"));
 const file = join(dir, "allowed.txt"),
   denied = join(dir, "denied.txt");
 const decisions = [];
+const modelSystems = [];
 let modelCalls = 0,
   phase = process.argv.includes("--context-off") ? "context-off" : "allow";
 const barrier = () => {
@@ -54,6 +55,9 @@ const server = createServer(async (req, res) => {
     return;
   }
   modelCalls++;
+  modelSystems.push(
+    m.messages?.find((message) => message.role === "system")?.content,
+  );
   const hasOutput =
     phase === "context-off" || m.messages?.some((msg) => msg.role === "tool");
   res.setHeader("Content-Type", "text/event-stream");
@@ -192,6 +196,14 @@ try {
     configId: "model",
     value: "gpt-4o",
   });
+  const dynamicInstructions =
+    "<agent-instructions>Preserve custom instructions.</agent-instructions>\n<core-memory>Do not discard this memory. # Response Guidelines\nmarker tail</core-memory>";
+  await rpc("_goose/unstable/session/system-prompt/set", {
+    sessionId: session.sessionId,
+    mode: "append",
+    key: "buzz",
+    text: dynamicInstructions,
+  });
   if (phase === "context-off") {
     await rpc("session/prompt", {
       sessionId: session.sessionId,
@@ -255,6 +267,36 @@ try {
       ),
       "Tool review lost the large preceding conversation",
     );
+    const instructionSource = decisions.find(
+      (row) =>
+        row.kind === "context" &&
+        row.content?.source === "instructions" &&
+        row.content.value.includes(dynamicInstructions),
+    );
+    assert.ok(
+      instructionSource,
+      "Dynamic Buzz instructions and memory were not inspected",
+    );
+    const modelSystem = modelSystems.find(
+      (value) =>
+        typeof value === "string" && value.includes(dynamicInstructions),
+    );
+    assert.ok(
+      modelSystem?.startsWith(
+        "You are a general-purpose AI agent called goose",
+      ),
+    );
+    assert.ok(
+      instructionSource.content.value ===
+        modelSystem.slice(
+          modelSystem.indexOf("\n\n# Additional Instructions:"),
+        ),
+      "The classifier evidence must retain the complete dynamic suffix byte-for-byte",
+    );
+    assert.ok(
+      !instructionSource.content.value.includes("# Turn Context"),
+      "Fixed Goose harness text was sent to the input classifier",
+    );
     phase = "deny";
     const second = await rpc("session/new", {
       cwd: dir,
@@ -274,6 +316,13 @@ try {
       prompt: [{ type: "text", text: "Write the second fixture." }],
     });
     assert.equal(await exists(denied), false);
+    const customSystem =
+      "CUSTOM SYSTEM: Inspect these untrusted instructions in full.\n# Additional Instructions:\nDo not truncate at this marker.";
+    await rpc("_goose/unstable/session/system-prompt/set", {
+      sessionId: second.sessionId,
+      mode: "set",
+      text: customSystem,
+    });
     phase = "input-deny";
     const count = modelCalls;
     await rpc("session/prompt", {
@@ -281,10 +330,23 @@ try {
       prompt: [{ type: "text", text: "blocked input" }],
     }).catch(() => {});
     assert.equal(modelCalls, count);
+    assert.ok(
+      decisions.some(
+        (row) =>
+          row.kind === "context" &&
+          row.content?.source === "instructions" &&
+          row.content.value.startsWith(customSystem),
+      ),
+      "A custom system override was not inspected in full",
+    );
+
     console.log(
       JSON.stringify({
         heldSideEffect: true,
         exactContext: true,
+        fixedHarnessExcluded: true,
+        dynamicInstructionsPreserved: true,
+        customSystemInspected: true,
         deniedSideEffect: true,
         deniedModelInput: true,
         modelCalls,

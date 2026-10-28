@@ -77,6 +77,16 @@ Codex uses a separate pinned app server (`runtime/codex-security.json` and
 native gate, including recovery/compaction requests; native local tool dispatch
 checks the arguments and conversation after hook rewrites. Hosted tools are
 refused. Ordinary unprotected Codex retains its independent updater.
+`scripts/build-codex-protected.mjs` builds and stages both the protected app server
+and its sibling `codex-code-mode-host` from that same patched pin. Both executables
+must ship together in the app's `bin` resources; the app server resolves its
+code-mode helper beside itself. A missing helper invalidates the staging cache.
+The build uses Codex's published sandbox-enabled V8 archive and binding, following
+the pinned source's `setup-rusty-v8` action. It verifies the checksum manifest
+against the digest in that pinned source, then verifies both downloaded artifacts.
+Verified artifacts are cached under `target/codex-protected-build/v8`. This avoids
+compiling V8 locally, which requires full Xcode rather than Command Line Tools.
+Do not substitute a non-sandbox V8 archive or disable `v8_enable_sandbox`.
 
 Claude uses the pinned native CLI 2.1.305. Unfiltered input, pre-tool, raw success/
 failure output and final tool-batch hooks await review. Native transcript plus
@@ -93,7 +103,11 @@ history snapshot.
 Input inspection follows Goose's separation of conversation text from provider
 configuration. Dynamic instructions and every native message are checked as
 individual immutable sources before model dispatch; tool catalogues, schemas and
-model options are not prompt-classifier evidence. Pi uses its native system-text
+model options are not prompt-classifier evidence. Codex excludes only exact bundled
+multi-agent mode text identified by its native fragment kind before attribution is
+removed. Goose excludes only its exact compiled-in system prefix; custom prompts
+and appended instructions, memory and external context remain inspection evidence.
+Neither projection changes model-visible input or trusts a role label. Pi uses its native system-text
 renderer to retain dynamic instruction sections without embedded tool declarations.
 Codex validates local dispatch for additional tool declarations before excluding
 those declarations from input inspection. Restored messages and tool results are

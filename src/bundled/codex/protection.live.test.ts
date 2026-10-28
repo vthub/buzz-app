@@ -24,6 +24,29 @@ it.skipIf(!binary)(
   40_000,
 );
 it.skipIf(!binary)(
+  "native Codex code mode holds and denies nested tool execution through its bundled helper",
+  async () => {
+    if (!binary)
+      throw new Error("Set the pinned runtime binary for this native fixture");
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./protection-fixture.mjs", import.meta.url)),
+        binary,
+        "--code-mode",
+      ],
+      { timeout: 35_000 },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      heldSideEffect: true,
+      deniedSideEffect: true,
+      deniedModelInput: true,
+      codeModeToolCalls: true,
+    });
+  },
+  40_000,
+);
+it.skipIf(!binary)(
   "native Codex holds an exact action, prevents denied writes, and denies input before inference",
   async () => {
     if (!binary)
