@@ -398,9 +398,10 @@ export function EditableInput({
             ),
           );
         }
-        // Keep semantic recipient/resource atoms, but demote presentation-only
-        // tokens when their renderer disappears so the source is editable again.
-        // Mention-boundary edits also remove invalidated recipient provenance.
+        // Keep semantic recipient/resource/pending-mention atoms, but demote
+        // presentation-only tokens when their renderer disappears so the source
+        // is editable again. Mention-boundary edits also remove invalidated
+        // recipient provenance.
         for (const token of next.tokens) {
           if (
             token.node.attrs.recipient
@@ -409,6 +410,7 @@ export function EditableInput({
                     item.start === token.start && item.end === token.end,
                 )
               : token.node.attrs.resource ||
+                token.node.attrs.pending ||
                 decorations.some(
                   // A larger decoration has already adopted any tokens inside it.
                   (item) => item.start <= token.start && item.end >= token.end,
