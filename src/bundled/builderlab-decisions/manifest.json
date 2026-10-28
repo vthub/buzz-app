@@ -1,0 +1,10 @@
+{
+  "id": "block.builderlab-decisions",
+  "name": "Builderlab decisions",
+  "apiVersion": 1,
+  "description": "Answer decisions with your Builderlab account.",
+  "discovery": {
+    "category": "developer-tools-and-integrations",
+    "tags": ["builderlab"]
+  }
+}

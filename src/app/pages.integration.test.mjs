@@ -84,6 +84,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.todos",
           "buzz.usage",
           "buzz.relay-notes",
+          "block.builderlab-decisions",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );

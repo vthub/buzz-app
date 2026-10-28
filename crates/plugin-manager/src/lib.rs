@@ -247,6 +247,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
             .expect("huddles manifest"),
         builderlab,
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/builderlab-decisions/manifest.json"
+        ))
+        .expect("builderlab decisions manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))

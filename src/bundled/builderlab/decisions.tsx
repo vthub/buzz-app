@@ -1,6 +1,7 @@
 // Builderlab as a decision provider: the user's Builderlab sign-in, which
 // native code sends with each call. Settings > Decisions API shows the same
-// sign-in control as this plugin's card while it is selected.
+// sign-in control as this plugin's card while it is selected. This plugin
+// provides it unregistered; the Builderlab decisions plugin registers it.
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
 import type {
@@ -131,4 +132,10 @@ function BuilderlabDecisionsSettings({
         )}
     </div>
   );
+}
+
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    builderlabDecisions: DecisionProvider;
+  }
 }

@@ -28,7 +28,6 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
-  "decisions",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
@@ -132,7 +131,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
-    ctx.decisions.registerProvider(builderlabProvider(session, loginAvailable));
+    // The Builderlab decisions plugin offers this in Settings > Decisions API.
+    ctx.provide(
+      "builderlabDecisions",
+      builderlabProvider(session, loginAvailable),
+    );
     ctx.provide("builderlab", hostedAgentSettings(session, agents));
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and

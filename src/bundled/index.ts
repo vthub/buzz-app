@@ -7,6 +7,8 @@ import huddlesManifest from "./huddles/manifest.json";
 import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
+import builderlabDecisionsManifest from "./builderlab-decisions/manifest.json";
+import * as builderlabDecisions from "./builderlab-decisions";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
@@ -83,6 +85,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...builderlabManifest, apiVersion: 1 },
     module: builderlab,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...builderlabDecisionsManifest, apiVersion: 1 },
+    module: builderlabDecisions,
+    enabledByDefault: false,
   },
   {
     manifest: { ...pairingManifest, apiVersion: 1 },
