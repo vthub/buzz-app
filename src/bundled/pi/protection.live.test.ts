@@ -23,19 +23,20 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});retur
 const until=async test=>{const end=Date.now()+5000;while(!await test()){if(Date.now()>end)throw new Error('Missing lifecycle boundary');await new Promise(r=>setTimeout(r,5));}};
 const exists=path=>stat(path).then(()=>true,()=>false);
 function start(check,protectedAgent=agent) {
- const input=new PassThrough(),output=new PassThrough(),pending=new Map(),checks=new Map(),actions=[];let id=0;
+ const input=new PassThrough(),output=new PassThrough(),pending=new Map(),checks=new Map(),actions=[],nativeHooks=[];let id=0;
  createInterface({input:output}).on('line',line=>{
   const m=JSON.parse(line);
   if(m.method==='security') {
    const stop=new AbortController();checks.set(m.id,stop);actions.push(m.params);
    Promise.resolve().then(()=>check(m.params,stop.signal)).then(allowed=>input.write(JSON.stringify({id:m.id,result:allowed===true})+'\n'),()=>input.write(JSON.stringify({id:m.id,result:false})+'\n')).finally(()=>checks.delete(m.id));
-  } else if(m.method==='security_cancel')checks.get(m.params.id)?.abort();
+  } else if(m.method==='hook'){nativeHooks.push(m.params);input.write(JSON.stringify({id:m.id,result:undefined})+'\n');}
+  else if(m.method==='security_cancel')checks.get(m.params.id)?.abort();
   else if(m.method==='tool')input.write(JSON.stringify({id:m.id,result:{content:[{type:'text',text:'sent'}]}})+'\n');
   else if(m.id!==undefined){const p=pending.get(m.id);pending.delete(m.id);m.error?p?.reject(new Error(m.error)):p?.resolve(m.result);}
  });
  const rpc=(method,params)=>new Promise((resolve,reject)=>{pending.set(++id,{resolve,reject});input.write(JSON.stringify({id,method,params})+'\n');});
  const server=serve({data,models,dir:data,protectedAgent,input,output,exit:()=>{}});
- return {rpc,actions,stop:server.stop};
+ return {rpc,actions,stop:async()=>{await server.stop();assert.deepEqual(nativeHooks,[]);}};
 }
 const turn=(request,text='Do the task',key='chan/root')=>({agent,key,at:100,context:{channel:'chan',root:'root'},text,steer:text,request,provider:'faux',model:'faux-1',instructions:'Test.',cwd:data});
 let inspect=async()=>true;

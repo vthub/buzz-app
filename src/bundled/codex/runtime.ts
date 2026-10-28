@@ -1615,7 +1615,8 @@ export class CodexRuntime {
       !disabled && this.server?.rpc === rpc && this.hooks
         ? await nativeHookState(rpc, workspace)
         : undefined;
-    const hookAdapter = disabled || agent.protection ? undefined : this.hooks;
+    const hookAdapter =
+      !disabled && this.server?.rpc === rpc ? this.hooks : undefined;
     const bridge = hookAdapter
       ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
           hookAdapter.run(agent.key, session, event, input),

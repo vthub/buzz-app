@@ -871,30 +871,32 @@ export function serve({
           { tag: false },
         ),
       ],
-      hooks: [
-        hook(ToolTask, {
-          beforeTool: (input, api, context) =>
-            awaitWithContext(
-              call("hook", {
-                agent: opened.agent,
-                conversation: api.conversationId,
-                event: "beforeTool",
-                input,
-              }),
-              context,
-            ).then((value) => value ?? undefined),
-          afterTool: (input, result, api, context) =>
-            awaitWithContext(
-              call("hook", {
-                agent: opened.agent,
-                conversation: api.conversationId,
-                event: "afterTool",
-                input: { call: input, result },
-              }),
-              context,
-            ).then((value) => value ?? undefined),
-        }),
-      ],
+      hooks: protectedAgent
+        ? []
+        : [
+            hook(ToolTask, {
+              beforeTool: (input, api, context) =>
+                awaitWithContext(
+                  call("hook", {
+                    agent: opened.agent,
+                    conversation: api.conversationId,
+                    event: "beforeTool",
+                    input,
+                  }),
+                  context,
+                ).then((value) => value ?? undefined),
+              afterTool: (input, result, api, context) =>
+                awaitWithContext(
+                  call("hook", {
+                    agent: opened.agent,
+                    conversation: api.conversationId,
+                    event: "afterTool",
+                    input: { call: input, result },
+                  }),
+                  context,
+                ).then((value) => value ?? undefined),
+            }),
+          ],
       tools: tools.map((tool) =>
         defineTool({
           name: `${PREFIX}${tool.name}`,

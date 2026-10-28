@@ -101,6 +101,8 @@ retained; this contract does not adopt Goose's ten-user-message window. An indiv
 source failure prevents model dispatch. Tool-action inspection still receives the
 exact arguments and combined preceding native conversation.
 
+Optional native plugin hooks are disabled for protected Pi, Claude and Codex workers until replacement payloads can be inspected in the correct order. Ordinary workers retain native hook dispatch.
+
 All supported protected workers require packaged macOS containment. Reviewer
 choice remains separate from the requesting runtime's enforcement capability.
 

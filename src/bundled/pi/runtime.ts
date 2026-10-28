@@ -217,18 +217,18 @@ export class PiRuntime {
       () => this.spawn,
       {
         tool: (call) => this.tool(call),
-      hook: (call) => {
-        if (!this.agents.has(call.agent))
-          throw new Error("Pi hook agent is no longer active");
-        return (
-          this.hook?.(
-            call.agent,
-            String(call.conversation),
-            call.event,
-            call.input,
-          ) ?? Promise.resolve(null)
-        );
-      },
+        hook: (call) => {
+          if (!this.agents.has(call.agent))
+            throw new Error("Pi hook agent is no longer active");
+          return (
+            this.hook?.(
+              call.agent,
+              String(call.conversation),
+              call.event,
+              call.input,
+            ) ?? Promise.resolve(null)
+          );
+        },
         event: (event) => this.event(event),
         prompt: ({ agent, request }) =>
           this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??

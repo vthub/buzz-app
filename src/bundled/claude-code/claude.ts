@@ -338,7 +338,10 @@ export class ClaudeProcess {
   /** Gives a started process its prompt, and its tools to whoever it now
    * works for. Loads settings and tools now rather than on the first message. */
   async initialize(
-    launch: Pick<ClaudeLaunch, "systemPrompt" | "tools" | "protection" | "hook">,
+    launch: Pick<
+      ClaudeLaunch,
+      "systemPrompt" | "tools" | "protection" | "hook"
+    >,
   ) {
     try {
       if (launch.tools) this.tools = launch.tools;
@@ -386,12 +389,15 @@ export class ClaudeProcess {
                       ],
                     }
                   : Object.fromEntries(
-                      CLAUDE_HOOK_EVENTS.map(event => [event, [{hookCallbackIds: [`buzz:${event}`]}]]),
+                      CLAUDE_HOOK_EVENTS.map((event) => [
+                        event,
+                        [{ hookCallbackIds: [`buzz:${event}`] }],
+                      ]),
                     )),
                 PostToolUse: [
                   ...(launch.protection
                     ? [{ hookCallbackIds: ["security-incoming"], timeout: 600 }]
-                    : [{hookCallbackIds: ["buzz:PostToolUse"]}]),
+                    : [{ hookCallbackIds: ["buzz:PostToolUse"] }]),
                   ...(launch.tools
                     ? [{ matcher: FINAL_TOOL, hookCallbackIds: ["final"] }]
                     : []),

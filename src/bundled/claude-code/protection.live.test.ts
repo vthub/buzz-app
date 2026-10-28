@@ -173,7 +173,12 @@ it.skipIf(!binary)(
         exited,
       };
     };
+    let optionalHookCalls = 0;
     const launch = {
+      hook: async () => {
+        optionalHookCalls++;
+        return {};
+      },
       cwd: dir,
       systemPrompt: "Do exactly the user's task.",
       model: "claude-sonnet-4-6",
@@ -320,6 +325,7 @@ it.skipIf(!binary)(
         before = calls;
       await third.send("Blocked input.");
       expect(calls).toBe(before);
+      expect(optionalHookCalls).toBe(0);
     } finally {
       release();
       resumeRelease();
