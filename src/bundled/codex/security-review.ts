@@ -1,11 +1,12 @@
 import { AppServer, type Spawn } from "./rpc";
+import type { ReviewPrompt } from "../../features/agent-protection/models";
 
 /** Reviews on a separate native worker whose model requests offer no tools and
  * whose dispatcher refuses every tool, including unadvertised calls. */
 export async function reviewModel(
   spawn: Spawn,
   model: { provider?: string; id: string },
-  prompt: string,
+  prompt: ReviewPrompt,
   cancelled: AbortSignal,
 ) {
   const rpc = new AppServer();
@@ -81,6 +82,7 @@ export async function reviewModel(
     }>("thread/start", {
       ...(model.id ? { model: model.id } : {}),
       ephemeral: true,
+      developerInstructions: prompt.system,
       approvalPolicy: "never",
       sandbox: "read-only",
       config: {
@@ -95,7 +97,7 @@ export async function reviewModel(
     signal.throwIfAborted();
     await rpc.request("turn/start", {
       threadId,
-      input: [{ type: "text", text: prompt, text_elements: [] }],
+      input: [{ type: "text", text: prompt.input, text_elements: [] }],
       outputSchema: {
         type: "object",
         properties: {

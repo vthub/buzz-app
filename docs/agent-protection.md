@@ -102,11 +102,18 @@ and preceding conversation evidence. Only structured `{blocked, reason}` output
 is accepted; the assessment records the actual model. Provider changes, invalid
 output and cancellation never create an approval.
 
+`review(model, request, signal, explanationOnly)` uses the same short-lived,
+tool-free inference for a pending finding, without creating an agent identity.
+Human explanations grant no execution authority. Completion receives separate
+`{system, input}` fields: fixed trusted review instructions and JSON user evidence.
+Each runtime preserves those roles and disposes its temporary inference work.
+
 Buzz Security independently configures incoming-content and dangerous-action
 hooks, at default and per-agent scope. Each can be disabled or assigned a model
 from any registered runtime, including custom model IDs. Recommended selections
 are defaults rather than an allowlist. Model assessment is distinct from assigning
-a Buzz agent to recommend or decide on a flagged action.
+a Buzz agent to recommend or decide on a flagged action. The security plugin
+offers model review by default, with an existing Buzz agent as an explicit option.
 
 ## Evidence
 

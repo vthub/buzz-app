@@ -3,6 +3,7 @@
 // call runs a short-lived `goose-acp`; keys go to goose's secret store, never
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
+import type { ReviewPrompt } from "../../features/agent-protection/models";
 import type {
   AgentProviderSnapshot,
   Models,
@@ -291,7 +292,7 @@ export class GooseSetup {
 
   review(
     model: { provider?: string; id: string },
-    prompt: string,
+    prompt: ReviewPrompt,
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();

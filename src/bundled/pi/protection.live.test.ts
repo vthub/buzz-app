@@ -22,7 +22,7 @@ const result={};
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
 const until=async test=>{const end=Date.now()+5000;while(!await test()){if(Date.now()>end)throw new Error('Missing lifecycle boundary');await new Promise(r=>setTimeout(r,5));}};
 const exists=path=>stat(path).then(()=>true,()=>false);
-function start(check) {
+function start(check,protectedAgent=agent) {
  const input=new PassThrough(),output=new PassThrough(),pending=new Map(),checks=new Map(),actions=[];let id=0;
  createInterface({input:output}).on('line',line=>{
   const m=JSON.parse(line);
@@ -34,7 +34,7 @@ function start(check) {
   else if(m.id!==undefined){const p=pending.get(m.id);pending.delete(m.id);m.error?p?.reject(new Error(m.error)):p?.resolve(m.result);}
  });
  const rpc=(method,params)=>new Promise((resolve,reject)=>{pending.set(++id,{resolve,reject});input.write(JSON.stringify({id,method,params})+'\n');});
- const server=serve({data,models,dir:data,protectedAgent:agent,input,output,exit:()=>{}});
+ const server=serve({data,models,dir:data,protectedAgent,input,output,exit:()=>{}});
  return {rpc,actions,stop:server.stop};
 }
 const turn=(request,text='Do the task',key='chan/root')=>({agent,key,at:100,context:{channel:'chan',root:'root'},text,steer:text,request,provider:'faux',model:'faux-1',instructions:'Test.',cwd:data});
@@ -104,6 +104,23 @@ try {
  assert.ok(pi.actions.every(row=>row.agent===agent&&/^\d+$/.test(row.action.session)));
  await assert.rejects(pi.rpc('test',{provider:'faux',model:'faux-1'}),/outside the protected/);result.closedSetupBypass=true;
 } finally {await pi.stop();}
+// A one-shot reviewer has no opened agent and separates trusted instructions
+// from adversarial evidence without offering tools.
+const reviewer=start(()=>true,null);
+try {
+ faux.setResponses([(context)=>{
+  assert.equal(context.messages[0].role,'system');
+  assert.equal(context.messages[0].content,'TRUSTED_REVIEW_INSTRUCTIONS');
+  assert.equal(context.messages[1].role,'user');
+  assert.equal(context.messages[1].content,'UNTRUSTED_ACTION_EVIDENCE');
+  assert.ok(context.messages.every(message=>!message.toolsAdded?.length));
+  return fauxAssistantMessage('{"blocked":true,"reason":"Review this action"}');
+ }]);
+ const reviewed=await reviewer.rpc('review',{id:'isolated-review',provider:'faux',model:'faux-1',prompt:{system:'TRUSTED_REVIEW_INSTRUCTIONS',input:'UNTRUSTED_ACTION_EVIDENCE'}});
+ assert.equal(JSON.parse(reviewed.text).blocked,true);
+ assert.equal(reviewer.actions.length,0);
+ result.toolFreeReview=true;
+} finally {await reviewer.stop();}
 // Wrappers also handle errors and exact snapshots independently.
 const emitted=[];let seen;
 const api={conversationId:1,output:value=>emitted.push(value),diagnostic:value=>emitted.push(value),details:async value=>emitted.push(value)};
@@ -160,6 +177,7 @@ it.skipIf(!deps)(
             "closedOverrides",
             "concurrentSessions",
             "compactionRecovery",
+            "toolFreeReview",
           ].map((name) => [name, true]),
         ),
       );

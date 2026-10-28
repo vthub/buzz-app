@@ -142,6 +142,7 @@ export class AgentProtectionService extends Service {
     model: ReviewModel,
     action: ProtectionRequest,
     signal: AbortSignal,
+    purpose: "detect" | "explain" | "review" = "detect",
   ) {
     this.plugin();
     signal.throwIfAborted();
@@ -162,8 +163,8 @@ export class AgentProtectionService extends Service {
     const provider = this.modelProviders.get(model.runtime);
     if (!provider)
       throw new Error("The selected review model's runtime is unavailable");
-    const prompt = reviewPrompt(action);
-    if (new TextEncoder().encode(prompt).length > 65536)
+    const prompt = reviewPrompt(action, purpose);
+    if (new TextEncoder().encode(JSON.stringify(prompt)).length > 65536)
       throw new Error("Security review context is too large");
     const result = await provider.complete(model, prompt, signal);
     signal.throwIfAborted();
@@ -173,6 +174,20 @@ export class AgentProtectionService extends Service {
       ...result.model,
       runtime: model.runtime,
     });
+  }
+  /** One temporary review, separate from an agent identity or execution authority. */
+  review(
+    model: ReviewModel,
+    action: ProtectionRequest,
+    signal: AbortSignal,
+    explanationOnly: boolean,
+  ) {
+    return this.evaluate(
+      model,
+      action,
+      signal,
+      explanationOnly ? "explain" : "review",
+    );
   }
   async snapshot() {
     const { owner, agents, types } = this.current();

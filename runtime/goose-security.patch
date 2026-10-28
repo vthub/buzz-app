@@ -150,7 +150,7 @@
  pub mod agents;
 --- /dev/null
 +++ b/crates/goose/src/buzz_security.rs
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,298 @@
 +//! Mandatory Buzz admission, enabled only by the native protected launcher.
 +//! It sits below optional Goose hooks and never interprets a model as authority.
 +use crate::config::GooseMode;
@@ -388,13 +388,20 @@
 +    }
 +    #[derive(serde::Deserialize)]
 +    #[serde(deny_unknown_fields)]
++    struct ReviewPrompt {
++        system: String,
++        input: String,
++    }
++    #[derive(serde::Deserialize)]
++    #[serde(deny_unknown_fields)]
 +    struct Review {
 +        provider: Option<String>,
 +        id: String,
-+        prompt: String,
++        prompt: ReviewPrompt,
 +    }
 +    let request: Review = serde_json::from_value(params)?;
-+    if request.prompt.is_empty() || request.prompt.len() > 65536 {
++    if request.prompt.system.is_empty() || request.prompt.input.is_empty()
++        || request.prompt.system.len() + request.prompt.input.len() > 65536 {
 +        bail!("Invalid review prompt");
 +    }
 +    let config = crate::config::Config::global();
@@ -434,8 +441,8 @@
 +        Duration::from_secs(60),
 +        provider.complete(
 +            &model,
-+            "",
-+            &[Message::user().with_text(request.prompt)],
++            &request.prompt.system,
++            &[Message::user().with_text(request.prompt.input)],
 +            &[],
 +        ),
 +    )

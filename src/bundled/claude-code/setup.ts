@@ -3,6 +3,7 @@
 // process; the copy lives apart from any `claude` the user installed, and
 // shares their `~/.claude` sign-in and settings.
 import type { AgentProviderSnapshot } from "../../features/agents/service";
+import type { ReviewPrompt } from "../../features/agent-protection/models";
 import type {
   HostProcess,
   HostRequest,
@@ -506,7 +507,7 @@ export class ClaudeSetup {
 
   async review(
     model: { provider?: string; id: string },
-    prompt: string,
+    prompt: ReviewPrompt,
     signal: AbortSignal,
   ) {
     if (model.provider)
@@ -517,7 +518,7 @@ export class ClaudeSetup {
     signal.throwIfAborted();
     const worker = await ClaudeProcess.start(this.spawn, {
       cwd: "~",
-      systemPrompt: "",
+      systemPrompt: prompt.system,
       discovery: true,
       ...(model.id ? { model: model.id } : {}),
     });
@@ -526,7 +527,7 @@ export class ClaudeSetup {
     timeout.addEventListener("abort", cancel, { once: true });
     try {
       timeout.throwIfAborted();
-      const result = await worker.send(prompt);
+      const result = await worker.send(prompt.input);
       timeout.throwIfAborted();
       if (!result.ok)
         throw new Error(result.error ?? "The security model did not complete");

@@ -1069,8 +1069,10 @@ export function serve({
         typeof turn.id !== "string" ||
         reviews.has(turn.id) ||
         reviews.size >= 16 ||
-        typeof turn.prompt !== "string" ||
-        Buffer.byteLength(turn.prompt) > 65536
+        !turn.prompt ||
+        typeof turn.prompt.system !== "string" ||
+        typeof turn.prompt.input !== "string" ||
+        Buffer.byteLength(JSON.stringify(turn.prompt)) > 65536
       )
         throw new Error("Invalid security review request");
       const controller = new AbortController();
@@ -1085,8 +1087,13 @@ export function serve({
         const reply = await models.completeSimple(
           found,
           {
+            systemPrompt: turn.prompt.system,
             messages: [
-              { role: "user", content: turn.prompt, timestamp: Date.now() },
+              {
+                role: "user",
+                content: turn.prompt.input,
+                timestamp: Date.now(),
+              },
             ],
           },
           { maxTokens: 1024, maxRetries: 0, signal },

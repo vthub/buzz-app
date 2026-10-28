@@ -3,6 +3,7 @@
 // own `~/.pi/agent/auth.json`, shared with the `pi` command, never into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
 import type { Pi } from "./pi";
+import type { ReviewPrompt } from "../../features/agent-protection/models";
 
 export type Provider = Readonly<{
   id: string;
@@ -94,7 +95,7 @@ export class PiSetup {
   }
   async review(
     choice: { provider?: string; id: string },
-    prompt: string,
+    prompt: ReviewPrompt,
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
