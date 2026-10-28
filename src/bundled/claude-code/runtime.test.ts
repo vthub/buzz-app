@@ -716,7 +716,7 @@ it("refuses a synced effort it can't confirm, keeping the saved session for the 
   const settled: Promise<unknown>[] = [];
   const run = (id: string, model: string, synced?: string) => {
     const config = { ...DEFAULT_CONFIG, model, effort: synced ?? "" };
-    runtime.sync([{ pubkey: self, config } as Agent]);
+    runtime.sync([{ key: self, pubkey: self, config } as Agent]);
     return runtime.run({
       trigger: { type: "mention", event: event(id) },
       channelId: channel,

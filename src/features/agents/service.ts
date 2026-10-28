@@ -3280,7 +3280,22 @@ export class AgentsService extends Service implements Agents {
     this.retyping.add(pubkey);
     try {
       const home = this.communityConfigs.get(this.configHome(identity));
-      return await (home ? home.exclusive(pubkey, change) : change());
+      const retireThenChange = async () => {
+        const previous = this.types().find(
+          (type) => type.key === identity.type,
+        );
+        if (identity.protection && !previous?.retire)
+          throw new Error(
+            "The protected runtime cannot safely change its type",
+          );
+        for (const member of this.identities)
+          if (member.pubkey === pubkey && !member.deleted)
+            await previous?.retire?.(member.key);
+        return change();
+      };
+      return await (home
+        ? home.exclusive(pubkey, retireThenChange)
+        : retireThenChange());
     } finally {
       this.retyping.delete(pubkey);
       // Attaches it with the type it has now.

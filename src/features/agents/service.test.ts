@@ -3032,6 +3032,37 @@ describe("an agent in several communities", () => {
       expect(f.service.find(bot)?.type).toBe("example/echo");
     });
 
+    it("holds an automatic synced type change until every old membership runtime retires", async () => {
+      const c = channels("home synced", "example/echo");
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const retire = vi.fn(async (_key: string) => held);
+      const f = await joined({ retire });
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      const store = internals(f.service).configStore,
+        side = settings(home);
+      try {
+        store.applyRead(side, store.capture(side), {
+          kind: "head",
+          event: settingsFor("other/relay"),
+        });
+        await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+        expect(f.native.setType).not.toHaveBeenCalled();
+        expect(f.service.find(bot)?.type).toBe("example/echo");
+      } finally {
+        release();
+      }
+      await vi.waitFor(() =>
+        expect(f.service.find(bot)?.type).toBe("other/relay"),
+      );
+      expect(retire.mock.calls.map((call) => call[0]).sort()).toEqual(
+        [bot, away].sort(),
+      );
+    });
+
     it("takes the type another device's synced settings name", async () => {
       const c = channels("home synced", "example/echo");
       const f = await joined();
