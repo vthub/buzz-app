@@ -1,0 +1,82 @@
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { Button } from "../../shared/design-system/ui/Button";
+import type { OwnedCommunity } from "./builderlab-account";
+import { CommunityUrlField } from "./CommunityUrlField";
+import { OnboardingScreen } from "./OnboardingScreen";
+
+/**
+ * First-run landing after setup. The community URL is the live action; a
+ * linked account's owned communities are offered as rows that take the same
+ * path with their address.
+ */
+export function JoinCommunity({
+  url,
+  onUrlChange,
+  onFind,
+  owned = [],
+}: {
+  url: string;
+  onUrlChange: (url: string) => void;
+  /** Receives the canonical secure origin, and an invite link's code when one was pasted. */
+  onFind: (origin: string, code?: string) => void;
+  owned?: readonly OwnedCommunity[] | undefined;
+}) {
+  // The in-app Join a community landing's layout (CommunityLanding).
+  return (
+    <OnboardingScreen
+      labelledBy="welcome-title"
+      intro={
+        <>
+          <h1
+            id="welcome-title"
+            tabIndex={-1}
+            className="text-heading text-standard"
+          >
+            Join a community
+          </h1>
+          <div className="mt-4 grid w-full max-w-md gap-4 text-left">
+            {owned.length > 0 && (
+              // min-w-0 keeps a long hostname truncating rather than widening the grid.
+              <div className="flex min-w-0 flex-col gap-2">
+                <h2 className="m-0 text-body text-subtle">
+                  Communities you own
+                </h2>
+                <ul
+                  aria-label="Communities you own"
+                  className="m-0 flex list-none flex-col gap-3 p-0"
+                >
+                  {owned.map(({ host, url: origin }) => (
+                    <li key={origin} className="flex items-center gap-3">
+                      <Avatar alt="" fallback={host} />
+                      <p className="m-0 min-w-0 flex-1 truncate text-label text-standard">
+                        {host}
+                      </p>
+                      <Button
+                        aria-label={`Join ${host}`}
+                        onClick={() => onFind(origin)}
+                      >
+                        Join
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <CommunityUrlField
+              url={url}
+              onUrlChange={onUrlChange}
+              onSubmit={onFind}
+            />
+          </div>
+        </>
+      }
+    >
+      <Button size="lg" variant="ghost" disabled>
+        Scan a QR code — Coming soon
+      </Button>
+      <Button size="lg" variant="ghost" disabled>
+        Create a community — Coming soon
+      </Button>
+    </OnboardingScreen>
+  );
+}
