@@ -22,6 +22,15 @@ export function relayOrigin(input: string): string {
   return url.origin;
 }
 
+/**
+ * A community address as a person types it: a bare host is assumed to be a
+ * secure relay. Saved IDs never take this path, so an alias stays a non-URL.
+ */
+export function enteredRelayOrigin(input: string): string {
+  const value = input.trim();
+  return relayOrigin(value.includes("://") ? value : `wss://${value}`);
+}
+
 /** A short deployment ID is not a URL and must never acquire a session by itself. */
 export function isCommunityAlias(value: string) {
   return (

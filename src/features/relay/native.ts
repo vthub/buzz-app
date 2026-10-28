@@ -320,15 +320,22 @@ export async function nativeRelayInfo(community: string, signal?: AbortSignal) {
   return info as Record<string, unknown>;
 }
 
+/** The relay's own key as NIP-11 `self` publishes it: 64 lowercase hex, else absent. */
+export function relaySelf(info: Record<string, unknown>): string | undefined {
+  const self = info.self;
+  return typeof self === "string" && /^[a-f0-9]{64}$/.test(self)
+    ? self
+    : undefined;
+}
+
 export async function connectNativeTransport(
   community: string,
   signal?: AbortSignal,
 ): Promise<ReadTransport> {
   const origin = communityDestination(community).url;
   const info = await nativeRelayInfo(origin, signal);
-  const author = info.self;
-  if (typeof author !== "string" || !/^[a-f0-9]{64}$/.test(author))
-    throw new Error("Relay did not advertise its identity");
+  const author = relaySelf(info);
+  if (!author) throw new Error("Relay did not advertise its identity");
   const creation =
     Array.isArray(info.supported_nips) && info.supported_nips.includes(29);
   // NIP-CL: the relay keeps channel labels and answers label lookups.

@@ -1,4 +1,3 @@
-import { profileDefault } from "./profile-default";
 import { useEffect, useId, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -6,31 +5,15 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ArrowUpRightIcon } from "../../shared/design-system/icons";
-import {
-  communityRequest,
-  inspectProfile,
-  publishProfile,
-  type CommunityInfo,
-} from "./api";
+import { communityRequest, inspectProfile, type CommunityInfo } from "./api";
 import type { Communities, PersonalProfile } from "./service";
 import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
 import { communityDestination, relayOrigin } from "./destination";
 import { nativeIdentityEnabled } from "../identity/service";
 import { readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
+import { admitCommunity, completeJoin, type Current } from "./join";
 import styles from "./Communities.module.css";
-
-// Exact relay claim refusal codes, forwarded unchanged by the broker.
-const CLAIM_REFUSALS = {
-  invite_expired: "This invite code has expired — ask for a new one.",
-  invite_exhausted:
-    "This invite has reached its use limit. Ask for a new invite.",
-  invite_invalid: "This invite code is not valid for this community.",
-  join_policy_required:
-    "This community requires current policy acceptance. Go back and reopen the relay to review it.",
-  join_policy_not_accepted:
-    "The community policy changed. Go back and reopen the relay to review it.",
-};
 
 export function CommunityDialog({
   communities,
@@ -115,8 +98,8 @@ export function CommunityDialog({
   const allowed =
     (!policy?.age_attestation_required || adult) &&
     (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
-  const current = (entry?: PendingJoin) =>
-    mounted.current && (!entry || journal?.current(entry));
+  const current: Current = (entry) =>
+    mounted.current && (!entry || journal?.current(entry) === true);
   function showProfile(
     found: Awaited<ReturnType<typeof inspectProfile>>,
     pending?: PendingJoin,
@@ -150,55 +133,15 @@ export function CommunityDialog({
     } else if (step === "access") {
       if (!allowed) return;
       await work(async () => {
-        const pending = journal?.get(id);
-        if (pending) {
-          // A lost claim response may already have admitted this identity, even
-          // when its invite has since expired. Read before attempting another claim.
-          const found = await inspectProfile(id).catch((reason: unknown) => {
-            if (readErrorKind(reason) !== "denied") throw reason;
-            return undefined;
-          });
-          if (!current(pending)) return;
-          if (found) {
-            showProfile(found, pending);
-            return;
-          }
-        }
-        const transaction = journal?.begin(id);
-        if (code.trim()) {
-          const receipt = policy
-            ? (
-                await communityRequest<{ receipt: string }>(
-                  id,
-                  "accept-policy",
-                  {
-                    code: code.trim(),
-                    policy_version: policy.version,
-                    age_confirmed: adult,
-                  },
-                )
-              ).receipt
-            : undefined;
-          if (!current(transaction)) return;
-          const claim = await communityRequest<{ status: string }>(
-            id,
-            "claim",
-            { code: code.trim(), policy_receipt: receipt },
-          ).catch((reason: unknown) => {
-            const known =
-              reason instanceof Error &&
-              Object.hasOwn(CLAIM_REFUSALS, reason.message)
-                ? CLAIM_REFUSALS[reason.message as keyof typeof CLAIM_REFUSALS]
-                : undefined;
-            throw known ? new Error(known) : reason;
-          });
-          if (!["joined", "already_member"].includes(claim.status))
-            throw new Error("Membership was not confirmed");
-        }
-        if (!current(transaction)) return;
-        const found = await inspectProfile(id);
-        if (!current(transaction)) return;
-        showProfile(found, transaction);
+        const admission = await admitCommunity({
+          community: id,
+          journal,
+          code,
+          policy,
+          consent: { adult, agreed },
+          current,
+        });
+        if (admission) showProfile(admission.found, admission.entry);
       });
     } else {
       if (!profile.name.trim()) return;
@@ -206,32 +149,11 @@ export function CommunityDialog({
         if (mode === "profile")
           communities.saveProfile({ ...profile, name: profile.name.trim() });
         else {
-          if (!destination) throw new Error("Choose a community first");
-          const transaction = journal?.begin(id, profile);
-          const found = journal ? await inspectProfile(id) : original;
-          if (!current(transaction)) return;
-          const next =
-            found?.exists && profilesEqual(profile, found.profile)
-              ? profile
-              : {
-                  ...profile,
-                  name: profile.name.trim(),
-                  about: profile.about?.trim() ?? "",
-                };
-          if (!found?.exists || !profilesEqual(next, found.profile)) {
-            await publishProfile(id, next, found?.existing ?? {});
-            if (!current(transaction)) return;
-            // An accepted replaceable event may already be superseded.
-            const confirmed = await inspectProfile(id);
-            if (!current(transaction)) return;
-            if (!confirmed.exists || !profilesEqual(confirmed.profile, next))
-              throw new Error(
-                "Your profile change is not current. Your edits are retained; try again.",
-              );
-          }
-          if (!current(transaction)) return;
-          communities.joined(
-            {
+          if (!destination || !original)
+            throw new Error("Choose a community first");
+          const done = await completeJoin({
+            community: id,
+            membership: {
               id,
               name:
                 info?.name && info.name !== "Buzz Relay"
@@ -241,9 +163,13 @@ export function CommunityDialog({
                 ? { icon: info.icon }
                 : {}),
             },
-            profileDefault(next, communities.snapshot().profile, id),
-          );
-          if (transaction) journal?.finish(transaction);
+            found: original,
+            journal,
+            publish: profile,
+            communities,
+            current,
+          });
+          if (!done) return;
           onJoined?.(id);
         }
         close();

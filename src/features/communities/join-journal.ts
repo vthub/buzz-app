@@ -7,6 +7,9 @@ export type PendingJoin = {
   profile?: PersonalProfile;
 };
 
+/** The journal's own storage failures: this client's copy, safe to show as is. */
+export class JournalError extends Error {}
+
 /** Public progress only: invite codes, policy receipts and keys are never journaled. */
 export function createJoinJournal(viewer: string) {
   const key = `buzz-community-joins.v1:${viewer}`;
@@ -36,7 +39,7 @@ export function createJoinJournal(viewer: string) {
       }
       return entries;
     } catch {
-      throw new Error(
+      throw new JournalError(
         "Could not read unfinished community setup. Restore device storage and try again.",
       );
     }
@@ -45,7 +48,7 @@ export function createJoinJournal(viewer: string) {
     try {
       localStorage.setItem(key, JSON.stringify(entries));
     } catch {
-      throw new Error(
+      throw new JournalError(
         "Could not save community setup on this device. Free storage and try again.",
       );
     }

@@ -29,6 +29,7 @@ export function ProfileFields({
   community,
   onBusyChange,
   showAvatar = true,
+  autoFocus = false,
 }: {
   profile: PersonalProfile;
   onChange(profile: PersonalProfile): void;
@@ -36,6 +37,8 @@ export function ProfileFields({
   community?: string | undefined;
   onBusyChange?(busy: boolean): void;
   showAvatar?: boolean;
+  /** Focuses the display name on mount, for pages whose only task is this form. */
+  autoFocus?: boolean;
 }) {
   return (
     <div className="grid gap-4">
@@ -52,6 +55,7 @@ export function ProfileFields({
       <Field label="Display name">
         <Input
           autoComplete="nickname"
+          autoFocus={autoFocus}
           required
           disabled={disabled}
           value={profile.name}

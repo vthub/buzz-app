@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   communityDestination,
+  enteredRelayOrigin,
   relayAddress,
   relayOrigin,
   parseCommunityAliases,
@@ -64,6 +65,38 @@ it.each([
   `https://${"a".repeat(2048)}`,
 ])("rejects unsupported or ambiguous input (%#)", (input) => {
   expect(() => relayOrigin(input)).toThrow(/relay URL/);
+});
+
+// Typed-address cases from old Buzz's relayProbe.test.mjs, under this app's
+// secure-origin rule: ws/http, paths and doubled slashes stay rejected.
+it.each([
+  ["relay.example.com", "https://relay.example.com"],
+  ["  relay.example.com  ", "https://relay.example.com"],
+  ["relay.example.com:8443", "https://relay.example.com:8443"],
+  ["localhost:3000", "https://localhost:3000"],
+  ["wss://relay.example.com", "https://relay.example.com"],
+  ["WSS://Relay.Example.com/", "https://relay.example.com"],
+  ["HTTPS://relay.example.com:8443", "https://relay.example.com:8443"],
+])("normalizes the typed address %s", (input, expected) => {
+  expect(enteredRelayOrigin(input)).toBe(expected);
+});
+
+it.each([
+  "",
+  "   ",
+  "not a url at all",
+  "ftp://relay.example.com",
+  "ws://localhost:3000",
+  "http://relay.example.com",
+  "javascript:alert(1)",
+  "user:password@relay.example.com",
+  "relay.example.com/custom",
+  "relay.example.com?x=1",
+  "relay.example.com#x",
+  "wss://relay.example.com///",
+  "//relay.example.com",
+])("rejects the typed address %j", (input) => {
+  expect(() => enteredRelayOrigin(input)).toThrow(/relay URL/);
 });
 
 it("preserves old IDs and deduplicates their typed secure URLs", () => {

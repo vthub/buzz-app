@@ -7,6 +7,7 @@ import {
   nativeRelayRequest,
   nativeRelaySigner,
 } from "../relay/native";
+import { joinPolicy as readJoinPolicy } from "./join-policy";
 import { leaveRefusal, leaveRequestTemplate } from "./leave-protocol";
 import { adminReason, memberCommand } from "./admin-protocol";
 import { readRelayLibrary } from "../agents/relay-library";
@@ -59,36 +60,13 @@ export async function nativeCommunityRequest(
     joinPolicy.catch(() => {});
     const info = await discovery;
     const response = await joinPolicy;
-    const raw =
-      response.status === 404 ? null : (await readResponse(response)).policy;
-    if (
-      raw !== null &&
-      raw !== undefined &&
-      (typeof raw !== "object" || Array.isArray(raw))
-    )
-      throw new Error("Invalid community join policy");
-    const policy = raw as Record<string, unknown> | null | undefined;
-    if (
-      policy &&
-      (typeof policy.version !== "string" ||
-        typeof policy.age_attestation_required !== "boolean" ||
-        (policy.terms_markdown != null &&
-          typeof policy.terms_markdown !== "string") ||
-        (policy.privacy_markdown != null &&
-          typeof policy.privacy_markdown !== "string"))
-    )
-      throw new Error("Invalid community join policy");
     return {
       name: typeof info.name === "string" ? info.name : undefined,
       icon: typeof info.icon === "string" ? info.icon : undefined,
-      policy: policy
-        ? {
-            version: policy.version,
-            age_attestation_required: policy.age_attestation_required,
-            terms_markdown: policy.terms_markdown ?? undefined,
-            privacy_markdown: policy.privacy_markdown ?? undefined,
-          }
-        : null,
+      policy:
+        response.status === 404
+          ? null
+          : readJoinPolicy(await readResponse(response)),
     };
   }
   if (route === "session") {
