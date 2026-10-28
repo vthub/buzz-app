@@ -114,23 +114,48 @@ been quiet for 90 seconds. The tool creates an Attention source subscription. At
 in the conversation where it called the tool: no message is sent, and the agent
 is told its text is data. It quotes the failed checks' names and the new
 comments, line by line, each clipped, with GitHub's links. Agents comment as the
-`gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
-that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
-other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Existing device-local GitHub watches are imported once with their feedback cursor and destination. It ends when the
+`gh` account, as their owner does, so GitHub cannot tell them apart: by default
+a comment of that account that starts with 🤖, as an agent's do, wakes nobody,
+and the owner's other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Existing device-local GitHub watches are imported once with their feedback cursor and destination. It ends when the
 pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
 or when the agent calls it with `stop: true`.
 
-Settings → Plugins → GitHub comment authors limits whose feedback wakes agents,
-since anyone can comment on a public pull request. It holds trusted
-organizations, trusted logins (a bot's ends in `[bot]`) and ignored logins,
-saved on the device. Ignored logins never wake an agent. Until a trusted
-organization or login is saved, everyone else does; after, only trusted logins,
-members of a trusted organization and the signed-in account do. Membership is
-read through `gh` and kept for an hour; feedback whose author's membership
-cannot be read waits for a later poll, until ten polls in a row fail for that
-login alone and it counts as no member. A membership hidden from the `gh`
-account, or a misspelled organization, counts as none. Each poll reads the settings again, so a
-change applies to running watches. CI and pull request state are not limited.
+Settings → Plugins → GitHub comment authors decides whose feedback wakes agents,
+since anyone can comment on a public pull request. It holds rules, one per
+line, saved on the device. Each starts with `allow` or `deny`, followed by any
+of these conditions, all of which must hold:
+
+- `author:login`, an exact login, or `author:@me`, the signed-in `gh` account.
+  A bot's login ends in `[bot]`.
+- `author:/pattern/`, a JavaScript regular expression the login must match.
+- `org:name`, membership of a GitHub organization, named exactly.
+- `body:/pattern/`, a regular expression the comment's text must match.
+- `prefix:text`, what the comment starts with, leading space aside. It runs to
+  the end of the line, spaces included, so it comes last.
+
+Logins match case aside, so an author pattern always has the `i` flag; a
+pattern may also use `m`, `s` and `u`. The first rule that matches decides, and
+feedback no rule matches wakes nobody. Saving compiles every pattern and
+rejects the rules, naming the line, when one is not a rule. The defaults keep
+the behavior from before rules: agents' comments wake nobody, and everyone
+else's wake the agent.
+
+```text
+deny author:@me prefix:🤖
+allow author:@me
+allow
+```
+
+Replacing the bare `allow` with, say, `allow org:block` and
+`allow author:/^copilot/` limits feedback to those. Lists of trusted
+organizations, trusted logins and ignored logins saved before rules become the
+equivalent rules. Membership is asked of `gh` only for organizations the rules
+name, and kept for an hour; feedback whose author's membership cannot be read
+waits for a later poll, until ten polls in a row fail for that login alone and
+it counts as no member. A membership hidden from the `gh` account, or a
+misspelled organization, counts as none, and bots and deleted accounts are in
+no organization. Each poll reads the rules again, so a change applies to
+running watches. CI and pull request state are not limited.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need

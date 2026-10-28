@@ -1,116 +1,237 @@
 // Whose GitHub feedback wakes agents. Agents act on what a wake quotes, so a
-// stranger's comment on a public pull request should not reach them. Until an
-// allowlist is saved, every author does, as before it existed. Saved on this
-// device and edited in Settings; each poll reads it again, so a change applies
-// to running watches.
+// stranger's comment on a public pull request should not reach them. Rules,
+// one per line, allow or deny feedback; the first that matches decides, and
+// feedback none matches wakes nobody. The defaults admit everyone but agents'
+// own comments, as before rules existed. Saved on this device and edited in
+// Settings; each poll reads them again, so a change applies to running
+// watches.
 import type { Feedback } from "./watch";
 
-export type AuthorPolicy = Readonly<{
-  version: 1;
-  trustedOrganizations: readonly string[];
-  /** Exact logins; a bot's ends in `[bot]`. */
-  trustedAuthors: readonly string[];
-  /** Never wake an agent, even in a trusted organization. */
-  ignoredAuthors: readonly string[];
+export type Rule = Readonly<{
+  effect: "allow" | "deny";
+  /** An exact login, ME, or a pattern, all matched case aside. A bot's login
+   * ends in `[bot]`. */
+  author?: string | RegExp;
+  /** An organization the author is a member of. */
+  org?: string;
+  /** What the body starts with, leading space aside. */
+  prefix?: string;
+  body?: RegExp;
 }>;
 
-export const POLICY_KEY = "buzz.github.author-policy.v1";
-const EMPTY: AuthorPolicy = {
-  version: 1,
-  trustedOrganizations: [],
-  trustedAuthors: [],
-  ignoredAuthors: [],
-};
+export type AuthorPolicy = Readonly<{
+  /** The rules as saved, one per line. */
+  text: string;
+  rules: readonly Rule[];
+}>;
+
+/** The signed-in GitHub account, which agents use too. */
+export const ME = "@me";
+export const POLICY_KEY = "buzz.github.author-policy.v2";
+/** Trusted organizations and logins, and ignored logins, before rules. */
+export const LEGACY_POLICY_KEY = "buzz.github.author-policy.v1";
+/** Agents comment as the signed-in account and start with 🤖, so their own
+ * comments wake nobody; the owner's other comments wake the agent. */
+export const DEFAULT_RULES = `deny author:${ME} prefix:🤖
+allow author:${ME}
+allow`;
 const ORGANIZATION = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 // Enterprise Managed Users' logins end in `_shortcode`.
 const LOGIN = /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\[bot\])?$/i;
+/** A `/pattern/flags` condition value, up to the space after it. */
+const PATTERN = /^\/((?:\\.|[^\\/])+)\/([a-z]*)(?=\s|$)/;
 
-/** `policy`, or why it is not one. */
-export function validate(policy: AuthorPolicy): string | undefined {
-  const bad = (values: readonly string[], pattern: RegExp) =>
-    values.find((value) => !pattern.test(value));
-  const organization = bad(policy.trustedOrganizations, ORGANIZATION);
-  if (organization !== undefined)
-    return `${organization} is not a GitHub organization login`;
-  const login = bad(
-    [...policy.trustedAuthors, ...policy.ignoredAuthors],
-    LOGIN,
-  );
-  return login === undefined ? undefined : `${login} is not a GitHub login`;
+/** One line's rule, or why it is not one. */
+function rule(line: string): Rule | string {
+  const effect = /^(allow|deny)(?=\s|$)/.exec(line)?.[1];
+  if (effect !== "allow" && effect !== "deny")
+    return "it must start with allow or deny";
+  const conditions: {
+    author?: string | RegExp;
+    org?: string;
+    prefix?: string;
+    body?: RegExp;
+  } = {};
+  let rest = line.slice(effect.length).trimStart();
+  while (rest) {
+    const key = /^(author|org|prefix|body):/.exec(rest)?.[1];
+    if (key !== "author" && key !== "org" && key !== "prefix" && key !== "body")
+      return `${rest.split(/\s/)[0]} is not author:, org:, prefix: or body:`;
+    if (key in conditions) return `it has two ${key}: conditions`;
+    rest = rest.slice(key.length + 1);
+    // The prefix runs to the end of the line, spaces and all.
+    if (key === "prefix") {
+      if (!rest) return "prefix: needs text";
+      conditions.prefix = rest;
+      break;
+    }
+    if (key === "org" && rest.startsWith("/"))
+      return "org: takes an organization's exact name, not a /pattern/";
+    const pattern = PATTERN.exec(rest);
+    if ((key === "author" || key === "body") && pattern) {
+      const [whole, source = "", flags = ""] = pattern;
+      if (!/^(?!.*(.).*\1)[imsu]*$/.test(flags))
+        return `${whole} may only use the flags i, m, s and u`;
+      try {
+        conditions[key] = new RegExp(
+          source,
+          key === "author" && !flags.includes("i") ? `${flags}i` : flags,
+        );
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      rest = rest.slice(whole.length).trimStart();
+      continue;
+    }
+    if (key === "body" || rest.startsWith("/"))
+      return `${key}: needs a /pattern/ that ends with / and a space or the line's end`;
+    const value = /^\S*/.exec(rest)?.[0] ?? "";
+    rest = rest.slice(value.length).trimStart();
+    if (key === "org") {
+      if (!ORGANIZATION.test(value))
+        return `${value || "org:"} is not a GitHub organization login`;
+      conditions.org = value;
+    } else {
+      if (value !== ME && !LOGIN.test(value))
+        return `${value || "author:"} is not a GitHub login, ${ME} or /pattern/`;
+      conditions.author = value;
+    }
+  }
+  return { effect, ...conditions };
+}
+
+/** The policy `text` holds, or why it is not one, naming the line. */
+export function parse(text: string): AuthorPolicy | string {
+  const lines: string[] = [];
+  const rules: Rule[] = [];
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parsed = rule(trimmed);
+    if (typeof parsed === "string") return `Line ${index + 1}: ${parsed}`;
+    lines.push(trimmed);
+    rules.push(parsed);
+  }
+  return { text: lines.join("\n"), rules };
+}
+
+const DEFAULT = parse(DEFAULT_RULES) as AuthorPolicy;
+
+/** The rules a saved list of trusted organizations, trusted logins and
+ * ignored logins amounts to, with agents' own comments still denied. */
+function upgrade(value: unknown) {
+  const lists = value as {
+    version?: unknown;
+    trustedOrganizations?: unknown;
+    trustedAuthors?: unknown;
+    ignoredAuthors?: unknown;
+  } | null;
+  const list = (items: unknown) =>
+    Array.isArray(items) && items.every((item) => typeof item === "string")
+      ? (items as string[])
+      : undefined;
+  const organizations = list(lists?.trustedOrganizations);
+  const trusted = list(lists?.trustedAuthors);
+  const ignored = list(lists?.ignoredAuthors);
+  if (lists?.version !== 1 || !organizations || !trusted || !ignored)
+    return undefined;
+  return [
+    `deny author:${ME} prefix:🤖`,
+    ...ignored.map((login) => `deny author:${login}`),
+    ...(organizations.length || trusted.length
+      ? [
+          `allow author:${ME}`,
+          ...trusted.map((login) => `allow author:${login}`),
+          ...organizations.map((org) => `allow org:${org}`),
+        ]
+      : ["allow"]),
+  ].join("\n");
 }
 
 export function loadPolicy(): AuthorPolicy {
   try {
-    const value = JSON.parse(
-      localStorage.getItem(POLICY_KEY) ?? "null",
-    ) as AuthorPolicy | null;
-    const lists = [
-      value?.trustedOrganizations,
-      value?.trustedAuthors,
-      value?.ignoredAuthors,
-    ];
-    if (
-      value?.version !== 1 ||
-      !lists.every(
-        (list) =>
-          Array.isArray(list) && list.every((item) => typeof item === "string"),
-      ) ||
-      validate(value)
-    )
-      return EMPTY;
-    return value;
+    const saved = JSON.parse(localStorage.getItem(POLICY_KEY) ?? "null") as {
+      version?: unknown;
+      text?: unknown;
+    } | null;
+    const text =
+      saved?.version === 2 && typeof saved.text === "string"
+        ? saved.text
+        : upgrade(
+            JSON.parse(localStorage.getItem(LEGACY_POLICY_KEY) ?? "null"),
+          );
+    const policy = text === undefined ? DEFAULT : parse(text);
+    return typeof policy === "string" ? DEFAULT : policy;
   } catch {
-    return EMPTY;
+    return DEFAULT;
   }
 }
 
-export function savePolicy(policy: AuthorPolicy) {
-  const error = validate(policy);
-  if (error) throw new Error(error);
-  localStorage.setItem(POLICY_KEY, JSON.stringify(policy));
+/** Saves `text`'s rules, or throws why they are not rules. */
+export function savePolicy(text: string) {
+  const policy = parse(text);
+  if (typeof policy === "string") throw new Error(policy);
+  localStorage.setItem(
+    POLICY_KEY,
+    JSON.stringify({ version: 2, text: policy.text }),
+  );
+  return policy;
 }
 
-/** Whether an allowlist limits who wakes agents. */
-export const limited = (policy: AuthorPolicy) =>
-  policy.trustedOrganizations.length > 0 || policy.trustedAuthors.length > 0;
+/** Whether a rule lets anyone it has not denied wake agents. */
+export const open = (policy: AuthorPolicy) =>
+  policy.rules.some(
+    (rule) =>
+      rule.effect === "allow" &&
+      rule.author === undefined &&
+      rule.org === undefined &&
+      rule.prefix === undefined &&
+      rule.body === undefined,
+  );
 
-/** Whether `login` is listed, case aside; a bot is listed with `[bot]`. */
-const listed = (list: readonly string[], item: Feedback) => {
-  const login = `${item.author}${item.bot ? "[bot]" : ""}`.toLowerCase();
-  return list.some((entry) => entry.toLowerCase() === login);
-};
+/** The organizations rules name, whose membership GitHub is asked for. */
+export const organizations = (policy: AuthorPolicy) => [
+  ...new Set(
+    policy.rules.flatMap((rule) => (rule.org ? [rule.org.toLowerCase()] : [])),
+  ),
+];
 
-/** Whether `admit` needs to know if `item`'s author is in a trusted
- * organization. */
-export const needsLookup = (
-  item: Feedback,
-  policy: AuthorPolicy,
-  viewer: string,
-) =>
-  !item.bot &&
-  item.author !== "ghost" &&
-  item.author.toLowerCase() !== viewer.toLowerCase() &&
-  policy.trustedOrganizations.length > 0 &&
-  !listed(policy.ignoredAuthors, item) &&
-  !listed(policy.trustedAuthors, item);
-
-/** Whether `item` may wake an agent. `member` says whether its author is in
- * a trusted organization. The signed-in account, which is the owner's too,
- * is always trusted. */
+/** Whether `item` may wake an agent, or undefined until whether its author is
+ * in an organization a rule needs is known. `member` says, or is undefined
+ * while it does not know. Bots and deleted accounts are in no organization. */
 export function admit(
   item: Feedback,
   policy: AuthorPolicy,
   viewer: string,
-  member: (login: string) => boolean,
+  member: (login: string, org: string) => boolean | undefined,
 ) {
-  if (listed(policy.ignoredAuthors, item)) return false;
-  if (!limited(policy)) return true;
-  if (!item.bot && item.author.toLowerCase() === viewer.toLowerCase())
-    return true;
-  return (
-    listed(policy.trustedAuthors, item) ||
-    (needsLookup(item, policy, viewer) && member(item.author))
-  );
+  const login = `${item.author}${item.bot ? "[bot]" : ""}`;
+  for (const rule of policy.rules) {
+    const { author } = rule;
+    if (
+      author !== undefined &&
+      !(author instanceof RegExp
+        ? author.test(login)
+        : author === ME
+          ? !item.bot && item.author.toLowerCase() === viewer.toLowerCase()
+          : author.toLowerCase() === login.toLowerCase())
+    )
+      continue;
+    if (
+      rule.prefix !== undefined &&
+      !item.body.trimStart().startsWith(rule.prefix)
+    )
+      continue;
+    if (rule.body && !rule.body.test(item.body)) continue;
+    if (rule.org !== undefined) {
+      if (item.bot || item.author === "ghost") continue;
+      const known = member(item.author, rule.org.toLowerCase());
+      if (known === undefined) return undefined;
+      if (!known) continue;
+    }
+    return rule.effect === "allow";
+  }
+  return false;
 }
 
 /** The `gh api graphql --input -` body asking which of `organizations` each of
@@ -135,12 +256,13 @@ export function membershipRequest(
   return JSON.stringify({ query: `query{\n${users}\n}` });
 }
 
-/** For each of `logins`, whether a membershipRequest answer puts it in any of
- * the organizations, or undefined when the answer is unreadable. */
+/** For each of `logins`, which of `organizations` a membershipRequest answer
+ * puts it in, case aside, or undefined when the answer is unreadable. */
 export function parseMembership(
   output: string,
   logins: readonly string[],
-): Map<string, boolean> | undefined {
+  organizations: readonly string[],
+): Map<string, ReadonlySet<string>> | undefined {
   let data: Record<string, Record<string, unknown> | null> | undefined;
   try {
     data = (JSON.parse(output) as { data?: typeof data }).data;
@@ -153,7 +275,11 @@ export function parseMembership(
       const user = data[`u${index}`];
       return [
         login.toLowerCase(),
-        !!user && Object.values(user).some((org) => !!org),
+        new Set(
+          organizations
+            .filter((_, org) => !!user?.[`o${org}`])
+            .map((org) => org.toLowerCase()),
+        ),
       ];
     }),
   );

@@ -11,7 +11,7 @@ import type { Agent, AgentAttention } from "../../features/agents/service";
 import type { AttentionValue } from "../../features/agents/attention";
 import { POLL_MS, watchPulls } from "./watcher";
 import { pullOf, pullRequest, QUIET_MS, WAKE_LIMIT } from "./watch";
-import { POLICY_KEY } from "./authors";
+import { LEGACY_POLICY_KEY, savePolicy } from "./authors";
 
 const agent = "a".repeat(64);
 const root = "f".repeat(64);
@@ -98,17 +98,33 @@ function respond(pull: Pull, input: string) {
   });
 }
 
-/** What gh answers a membership read, when `members` are in the org. */
+/** What gh answers a membership read, when `members` are in every
+ * organization, or `login@org` in that one. */
 function membership(members: readonly string[], input: string) {
   const { query } = JSON.parse(input) as { query: string };
   const users = [...query.matchAll(/(u\d+):user\(login:"([^"]+)"\)/g)];
+  const orgs = [
+    ...new Map(
+      [...query.matchAll(/(o\d+):organization\(login:"([^"]+)"\)/g)].map(
+        ([, alias, org]) => [alias, org],
+      ),
+    ),
+  ];
   // GitHub has no user for a mannequin, which fails the whole read.
   if (users.some(([, , login]) => login === "mannequin")) return null;
   return JSON.stringify({
     data: Object.fromEntries(
       users.map(([, alias, login]) => [
         alias,
-        { o0: members.includes(login as string) ? { id: "O" } : null },
+        Object.fromEntries(
+          orgs.map(([org, name]) => [
+            org,
+            members.includes(login as string) ||
+            members.includes(`${login}@${name}`)
+              ? { id: "O" }
+              : null,
+          ]),
+        ),
       ]),
     ),
   });
@@ -261,7 +277,8 @@ function setup(initial: Pull | null = answer()) {
     gh: (value: Pull | null) => {
       gh = value;
     },
-    /** Who is in the trusted organization, or null when that cannot be read. */
+    /** Who is in every organization, or `login@org` in one, or null when
+     * membership cannot be read. */
     members: (value: readonly string[] | null) => {
       members = value;
     },
@@ -733,8 +750,9 @@ describe("github_watch_pr", () => {
   });
 
   it("tells only feedback from trusted authors, once their organization is known", async () => {
+    // Lists saved before rules still apply, as rules.
     localStorage.setItem(
-      POLICY_KEY,
+      LEGACY_POLICY_KEY,
       JSON.stringify({
         version: 1,
         trustedOrganizations: ["block"],
@@ -776,15 +794,7 @@ describe("github_watch_pr", () => {
       { length: 30 },
       (_, index) => `commenter-${index}-with-a-long-login`,
     );
-    localStorage.setItem(
-      POLICY_KEY,
-      JSON.stringify({
-        version: 1,
-        trustedOrganizations: organizations,
-        trustedAuthors: [],
-        ignoredAuthors: [],
-      }),
-    );
+    savePolicy(organizations.map((org) => `allow org:${org}`).join("\n"));
     const app = setup();
     await app.call({ url });
     app.members(logins);
@@ -809,15 +819,7 @@ describe("github_watch_pr", () => {
   });
 
   it("asks alone after a login fails its batch, and gives up on that login", async () => {
-    localStorage.setItem(
-      POLICY_KEY,
-      JSON.stringify({
-        version: 1,
-        trustedOrganizations: ["block"],
-        trustedAuthors: [],
-        ignoredAuthors: [],
-      }),
-    );
+    savePolicy("allow org:block");
     const app = setup();
     await app.call({ url });
     app.members(["alice"]);
@@ -842,6 +844,62 @@ describe("github_watch_pr", () => {
     await vi.advanceTimersByTimeAsync(3 * POLL_MS);
     expect(asked()).toBe(settled);
     expect(app.texts().join("\n")).not.toContain("body-mannequin");
+    app.dispose();
+  });
+
+  it("by default tells the viewer's comments but not its 🤖 ones", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "baxen", body: " 🤖 body-agent" },
+          { id: "I2", login: "Baxen", body: "body-owner" },
+          { id: "I3", login: "stranger", body: "🤖 body-stranger" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain("body-owner");
+    expect(app.texts()[0]).toContain("body-stranger");
+    expect(app.texts()[0]).not.toContain("body-agent");
+    // No membership is read when no rule names an organization.
+    expect(
+      app.runCommand.mock.calls.filter(
+        ([, input]) => !("variables" in JSON.parse(input as string)),
+      ),
+    ).toEqual([]);
+    app.dispose();
+  });
+
+  it("tells feedback rules allow by pattern and by each organization", async () => {
+    savePolicy(`deny body:/^\\s*nit\\b/i
+allow author:/^COPILOT/
+allow org:block
+allow org:squareup author:/^ada_/`);
+    const app = setup();
+    await app.call({ url });
+    app.members(["alice@block", "ada_x@squareup", "bob@squareup"]);
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "alice", body: "body-alice" },
+          { id: "I2", login: "ada_x", body: "body-ada" },
+          { id: "I3", login: "bob", body: "body-bob" },
+          { id: "I4", login: "copilot-x", body: "body-copilot" },
+          { id: "I5", login: "alice", body: "Nit: body-nit" },
+          { id: "I6", login: "baxen", body: "body-owner" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS + QUIET_MS + POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    const [text] = app.texts();
+    for (const body of ["body-alice", "body-ada", "body-copilot"])
+      expect(text).toContain(body);
+    for (const body of ["body-bob", "body-nit", "body-owner"])
+      expect(text).not.toContain(body);
     app.dispose();
   });
 

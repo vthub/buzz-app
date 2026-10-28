@@ -7,8 +7,8 @@
 // each line marked as quoted, and the agent need not read them itself.
 //
 // Agents use the signed-in gh account, as their owner does, so GitHub cannot
-// tell the two apart. A comment of that account that starts with 🤖, as an
-// agent's do, wakes nobody; the owner's own comments wake the agent.
+// tell the two apart. Which feedback reaches this, an agent's own 🤖 comment
+// included, is the GitHub comment authors rules' call (`authors.ts`).
 
 /** What a watched pull request looked like at one read. */
 export type PullSnapshot = Readonly<{
@@ -77,10 +77,6 @@ const BODY_CHARS = 1_000;
 const CHECKS = 20;
 const NAME_CHARS = 100;
 
-/** An agent's own comment: it starts with 🤖, as agents' do. */
-const agents = (item: Feedback, viewer: string) =>
-  item.author === viewer && /^\s*🤖/u.test(item.body);
-
 export type Step = Readonly<{
   watch: Watch;
   /** What to tell the agent, when there is something. */
@@ -99,9 +95,7 @@ export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
   const { ids } = snapshot;
   // The first read only learns what was already there.
   const seen = new Set(watch.seen ?? ids);
-  const arrived = snapshot.feedback.filter(
-    (item) => !seen.has(item.id) && !agents(item, snapshot.viewer),
-  );
+  const arrived = snapshot.feedback.filter((item) => !seen.has(item.id));
   const pending = [...(watch.pending ?? []), ...arrived];
   const next: Watch = {
     ...watch,

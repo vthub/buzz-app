@@ -16,7 +16,7 @@ import {
   admit,
   loadPolicy,
   membershipRequest,
-  needsLookup,
+  organizations,
   parseMembership,
   type AuthorPolicy,
 } from "./authors";
@@ -31,7 +31,7 @@ const MEMBERSHIP_MS = 60 * 60_000;
  * under. */
 const INPUT_BYTES = 4096;
 /** Polls in a row a login's own membership read may fail before it is taken
- * to be in no trusted organization, as one GitHub has no user for is. */
+ * to be in no organization, as one GitHub has no user for is. */
 const LOOKUP_FAILURES = 10;
 
 const keyOf = (watch: Pick<Watch, "agent" | "url">) =>
@@ -104,47 +104,55 @@ export function watchPulls(ctx: Context) {
   const legacy = load();
   const cursors = load(CURSORS);
   let disposed = false;
-  /** Membership answers by organizations and login. */
-  const members = new Map<string, { member: boolean; at: number }>();
+  /** Which organizations rules name each login is in, by the organizations
+   * and login. */
+  const members = new Map<string, { orgs: ReadonlySet<string>; at: number }>();
   /** Failed reads of a login's membership, by the same key. */
   const misses = new Map<string, number>();
-  const memberKey = (policy: AuthorPolicy, login: string) =>
-    `${policy.trustedOrganizations.join(" ").toLowerCase()} ${login.toLowerCase()}`;
-  /** Looks up the trusted-organization membership `feedback` needs, keeping
-   * what a failed read leaves unknown unknown. */
+  const memberKey = (orgs: readonly string[], login: string) =>
+    `${orgs.join(" ")} ${login.toLowerCase()}`;
+  /** Whether `login` is in `org`, as last read, or undefined when it has not
+   * been, or was read longer than `age` ago. */
+  const membership =
+    (orgs: readonly string[], age = Infinity) =>
+    (login: string, org: string) => {
+      const known = members.get(memberKey(orgs, login));
+      return known && Date.now() - known.at < age
+        ? known.orgs.has(org.toLowerCase())
+        : undefined;
+    };
+  /** Looks up the organization membership `feedback` needs, keeping what a
+   * failed read leaves unknown unknown. */
   const lookUp = async (
     feedback: readonly Feedback[],
     policy: AuthorPolicy,
     viewer: string,
   ) => {
-    const now = Date.now();
+    const orgs = organizations(policy);
+    const fresh = membership(orgs, MEMBERSHIP_MS);
     const logins = [
       ...new Set(
         feedback
-          .filter((item) => needsLookup(item, policy, viewer))
+          .filter((item) => admit(item, policy, viewer, fresh) === undefined)
           .map((item) => item.author.toLowerCase()),
       ),
-    ].filter((login) => {
-      const known = members.get(memberKey(policy, login));
-      return !known || now - known.at >= MEMBERSHIP_MS;
-    });
+    ];
+    const now = Date.now();
     const ask = async (batch: string[]) => {
       const output = await ctx.host.runCommand(
         "pull",
-        membershipRequest(batch, policy.trustedOrganizations),
+        membershipRequest(batch, orgs),
       );
       const found =
-        output === null ? undefined : parseMembership(output, batch);
-      for (const [login, member] of found ?? []) {
-        members.set(memberKey(policy, login), { member, at: now });
-        misses.delete(memberKey(policy, login));
+        output === null ? undefined : parseMembership(output, batch, orgs);
+      for (const [login, of] of found ?? []) {
+        members.set(memberKey(orgs, login), { orgs: of, at: now });
+        misses.delete(memberKey(orgs, login));
       }
       return !!found;
     };
     const size = (batch: string[]) =>
-      new TextEncoder().encode(
-        membershipRequest(batch, policy.trustedOrganizations),
-      ).length;
+      new TextEncoder().encode(membershipRequest(batch, orgs)).length;
     // Batches as large as the input limit allows.
     const batches: string[][] = [];
     for (const login of logins) {
@@ -158,12 +166,12 @@ export function watchPulls(ctx: Context) {
       if (await ask(batch)) continue;
       if (batch.length > 1) for (const login of batch) await ask([login]);
       for (const login of batch) {
-        const key = memberKey(policy, login);
+        const key = memberKey(orgs, login);
         if (members.get(key)?.at === now) continue;
         const missed = (misses.get(key) ?? 0) + 1;
         misses.set(key, missed);
         if (missed >= LOOKUP_FAILURES) {
-          members.set(key, { member: false, at: now });
+          members.set(key, { orgs: new Set(), at: now });
           misses.delete(key);
         }
       }
@@ -186,29 +194,24 @@ export function watchPulls(ctx: Context) {
     const feedback = text === null ? undefined : parseFeedback(text);
     const policy = loadPolicy();
     if (feedback) await lookUp(feedback, policy, snapshot.viewer);
-    const member = (login: string) =>
-      members.get(memberKey(policy, login))?.member;
-    // Feedback whose author's membership could not be read is not read yet.
-    const unknown = new Set(
-      (feedback ?? [])
-        .filter(
-          (item) =>
-            needsLookup(item, policy, snapshot.viewer) &&
-            member(item.author) === undefined,
-        )
-        .map((item) => item.id),
+    const member = membership(organizations(policy));
+    const admitted = new Map(
+      (feedback ?? []).map((item) => [
+        item.id,
+        admit(item, policy, snapshot.viewer, member),
+      ]),
     );
-    // What was not read stays unseen, to be read on a later poll.
+    // Feedback a rule needs its author's unread membership for is not read
+    // yet. What was not read stays unseen, to be read on a later poll.
+    const unknown = new Set(
+      [...admitted].flatMap(([id, ok]) => (ok === undefined ? [id] : [])),
+    );
     const got = new Set(feedback ? asked.filter((id) => !unknown.has(id)) : []);
     return {
       ...snapshot,
       ids: snapshot.ids.filter((id) => known.has(id) || got.has(id)),
-      // Feedback from authors the allowlist leaves out is seen but not told.
-      feedback: (feedback ?? []).filter(
-        (item) =>
-          !unknown.has(item.id) &&
-          admit(item, policy, snapshot.viewer, (login) => !!member(login)),
-      ),
+      // Feedback the rules deny is seen but not told.
+      feedback: (feedback ?? []).filter((item) => admitted.get(item.id)),
     };
   };
 
@@ -333,7 +336,7 @@ export function watchPulls(ctx: Context) {
   ctx.agents.addTool({
     name: "github_watch_pr",
     description:
-      "Wakes you in this conversation when CI finishes on a GitHub pull request's latest commit, or when someone reviews or comments on it. Comments of the signed-in GitHub account that start with 🤖 are taken as yours and wake nobody, so start your own with 🤖. Feedback from authors left out of the owner's GitHub comment authors allowlist wakes nobody either. One call covers later pushes. The watch ends when the pull request merges or closes, after " +
+      "Wakes you in this conversation when CI finishes on a GitHub pull request's latest commit, or when someone reviews or comments on it. Feedback the owner's GitHub comment authors rules deny wakes nobody. By default that is comments of the signed-in GitHub account that start with 🤖, which are taken as yours, so start your own with 🤖. One call covers later pushes. The watch ends when the pull request merges or closes, after " +
       `${WAKE_LIMIT} wakes, or when you call it with stop: true. Requires Attention to be on. Needs the gh CLI signed in.`,
     inputSchema: {
       type: "object",

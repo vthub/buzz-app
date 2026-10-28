@@ -74,15 +74,13 @@ describe("step", () => {
     expect(pushed.wake).toBe(`CI passed on 222222222 for ${url}.`);
   });
 
-  it("batches new feedback until it has been quiet, skipping only the agent's own", () => {
+  it("batches new feedback until it has been quiet", () => {
     const base = step(watch, snap(), 0).watch;
-    // The viewer's 🤖 comment is an agent's; its other comments are the owner's.
-    const agents = comment("2", "baxen", "🤖 Fixed in abc");
     const owners = comment("4", "baxen", "Please also rename it");
-    const first = step(base, snap({ feedback: [comment("1"), agents] }), 1_000);
+    const first = step(base, snap({ feedback: [comment("1")] }), 1_000);
     expect(first.wake).toBeUndefined();
     expect(first.watch.pending?.map((item) => item.id)).toEqual(["1"]);
-    const all = [comment("1"), agents, comment("3"), owners];
+    const all = [comment("1"), comment("3"), owners];
     const more = step(
       first.watch,
       snap({ feedback: all }),

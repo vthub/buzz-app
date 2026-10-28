@@ -3,101 +3,60 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header } from "../../shared/design-system/ui/Header";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
-import {
-  limited,
-  loadPolicy,
-  savePolicy,
-  validate,
-  type AuthorPolicy,
-} from "./authors";
-
-type Lists = Omit<AuthorPolicy, "version">;
-const FIELDS: [keyof Lists, string, string][] = [
-  [
-    "trustedOrganizations",
-    "Trusted organizations",
-    "One GitHub organization login per line. Members whose membership your GitHub account can see wake your agents; a misspelled organization matches nobody.",
-  ],
-  [
-    "trustedAuthors",
-    "Trusted commenters",
-    "One exact GitHub login per line. A bot's ends in [bot].",
-  ],
-  [
-    "ignoredAuthors",
-    "Ignored commenters",
-    "One exact GitHub login per line. These never wake agents, even in a trusted organization.",
-  ],
-];
-const lines = (value: string) =>
-  value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-const text = (policy: AuthorPolicy) =>
-  Object.fromEntries(
-    FIELDS.map(([key]) => [key, policy[key].join("\n")]),
-  ) as Record<keyof Lists, string>;
+import { loadPolicy, open, parse, savePolicy } from "./authors";
 
 /** Whose pull request comments and reviews wake agents watching it. */
 export function AuthorSettings({ active }: { active(): boolean }) {
   const [saved, setSaved] = useState(loadPolicy);
-  const [draft, setDraft] = useState(() => text(saved));
+  const [draft, setDraft] = useState(saved.text);
   const [error, setError] = useState("");
-  const policy: AuthorPolicy = {
-    version: 1,
-    trustedOrganizations: lines(draft.trustedOrganizations),
-    trustedAuthors: lines(draft.trustedAuthors),
-    ignoredAuthors: lines(draft.ignoredAuthors),
-  };
-  const dirty = JSON.stringify(policy) !== JSON.stringify(saved);
+  const parsed = parse(draft);
+  const dirty = typeof parsed === "string" || parsed.text !== saved.text;
   return (
     <section aria-label="GitHub comment authors settings">
       <Header
         title="GitHub comment authors"
-        subtitle="Agents watching a pull request are woken by CI, and by comments and reviews from these authors. Your own GitHub account always counts."
+        subtitle="Agents watching a pull request are woken by CI, and by the comments and reviews these rules allow."
       />
       <form
-        aria-label="GitHub author allowlist"
+        aria-label="GitHub comment author rules"
         className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           if (!active() || !dirty) return;
-          const invalid = validate(policy);
-          if (invalid) return setError(invalid);
           try {
-            savePolicy(policy);
+            const policy = savePolicy(draft);
+            setSaved(policy);
+            setDraft(policy.text);
+            setError("");
           } catch (reason) {
-            return setError(
-              reason instanceof Error ? reason.message : String(reason),
-            );
+            setError(reason instanceof Error ? reason.message : String(reason));
           }
-          setSaved(policy);
-          setDraft(text(policy));
-          setError("");
         }}
       >
-        {!limited(saved) && (
+        {open(saved) && (
           <p role="status" className="m-0 text-body-sm text-subtle">
-            No allowlist is set, so comments from anyone wake your agents. Add a
-            trusted organization or commenter to limit them.
+            A bare allow rule lets comments from anyone it reaches wake your
+            agents. Replace it with allow org:name or allow author:login to
+            limit them.
           </p>
         )}
-        {FIELDS.map(([key, label, description]) => (
-          <Field key={key} label={label} description={description}>
-            <Textarea
-              rows={3}
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              autoComplete="off"
-              value={draft[key]}
-              onChange={(event) => {
-                setDraft({ ...draft, [key]: event.target.value });
-              }}
-            />
-          </Field>
-        ))}
+        <Field
+          label="Rules"
+          description="One per line: allow or deny, then any of author:login, author:/pattern/, org:organization, body:/pattern/ and prefix:text, which runs to the end of the line. author:@me is your GitHub account, a bot's login ends in [bot], and logins match case aside. The first rule that matches decides; feedback no rule matches wakes nobody. Membership your GitHub account cannot see, or of a misspelled organization, counts as none."
+        >
+          <Textarea
+            rows={6}
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            autoComplete="off"
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+            }}
+          />
+        </Field>
         {error && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {error}
