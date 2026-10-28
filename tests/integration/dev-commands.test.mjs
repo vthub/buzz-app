@@ -22,6 +22,7 @@ function recipe(name, ...args) {
   const callsFile = path.join(directory, "calls.jsonl");
   const gooseFile = path.join(directory, "goose.jsonl");
   const commandFile = path.join(directory, "agent-command.jsonl");
+  const codexFile = path.join(directory, "codex-protected.jsonl");
   try {
     copyFileSync(
       new URL("../../justfile", import.meta.url),
@@ -48,6 +49,11 @@ function recipe(name, ...args) {
     writeFileSync(
       path.join(directory, "scripts/build-agent-command.mjs"),
       `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.BUZZ_TEST_AGENT_COMMAND, JSON.stringify(process.argv.slice(2)) + "\\n");\n`,
+    );
+    // Record the protected Codex build instead of compiling the runtime.
+    writeFileSync(
+      path.join(directory, "scripts/build-codex-protected.mjs"),
+      `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.BUZZ_TEST_CODEX, JSON.stringify(process.argv.slice(2)) + "\\n");\n`,
     );
     if (settings.local !== undefined)
       writeFileSync(path.join(directory, ".env.local"), settings.local);
@@ -96,6 +102,7 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWE
           BUZZ_TEST_CALLS: callsFile,
           BUZZ_TEST_GOOSE: gooseFile,
           BUZZ_TEST_AGENT_COMMAND: commandFile,
+          BUZZ_TEST_CODEX: codexFile,
           // Do not inherit the operator's public pin in isolated launcher tests.
           BUZZ_DEV_VIEWER: undefined,
           ...settings.env,
@@ -114,10 +121,13 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWE
     const command = existsSync(commandFile)
       ? readFileSync(commandFile, "utf8").trim().split("\n").map(JSON.parse)
       : [];
+    const codex = existsSync(codexFile)
+      ? readFileSync(codexFile, "utf8").trim().split("\n").map(JSON.parse)
+      : [];
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
-    return { ...result, calls, goose, command, port: portForPath(root) };
+    return { ...result, calls, goose, command, codex, port: portForPath(root) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -180,6 +190,7 @@ test("desktop builds the dev helpers first, and help does not", () => {
     const result = launched(target, ...args);
     assert.deepEqual(result.goose, expected);
     assert.deepEqual(result.command, expected);
+    assert.deepEqual(result.codex, expected);
   }
 });
 
