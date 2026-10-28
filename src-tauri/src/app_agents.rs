@@ -5,7 +5,8 @@
 use crate::sign_out::{self, legacy_identifier};
 use buzz_agent_controller::{
     inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
-    PortSource, Portables, ProtectionBinding, ProtectionDefaults, Published, Removal, Secret, CREDENTIALS_BUSY,
+    PortSource, Portables, ProtectionBinding, ProtectionDefaults, Published, Removal, Secret,
+    CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -720,7 +721,11 @@ pub(crate) async fn app_agent_claim(
         if !hosting.claim(&pubkey)? {
             return Ok(false);
         }
-        let current = agents.list()?.into_iter().find(|agent| agent.pubkey == pubkey && !agent.deleted).ok_or("No such agent on this device")?;
+        let current = agents
+            .list()?
+            .into_iter()
+            .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+            .ok_or("No such agent on this device")?;
         if current.protection_revision != revision.unwrap_or(0) {
             return Err("Agent protection changed; refresh before running this agent".into());
         }
