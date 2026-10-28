@@ -805,7 +805,13 @@ preserving the previous singleton replay allowance. A busy channel cannot consum
 another channel's sample. This reduces REQ frames and route-state publications,
 not historical database queries. Aggregate replay status stays conservative:
 500 received events can mark a batch limited but never prove any channel complete.
-EOSE establishes streaming, **not complete historical replay**. Retained channel
+EOSE establishes streaming, **not complete historical replay**. A first connect
+replays the last five minutes. After a drop, a route that had reached EOSE on that
+connection resumes a minute before the connection last heard the relay (a silent
+stall counts from its last frame, not from when it was detected), never earlier
+than the five-minute window; a route that had not reached EOSE, and the observer
+and presence routes, replay as a first connect does. A batch resumes from its
+slowest channel. Retained channel
 windows get finite, signed-bounds head catch-up after establishment/reconnect;
 unopened channels defer it until demand. `live.snapshot().heads` distinguishes
 pending, verified, deferred and failed obligations. Verification covers the
@@ -889,9 +895,13 @@ budget: other processes/clients can still cause a refusal. Ambiguous publication
 outcomes retain their exact signed event and are never transparently re-signed.
 
 The relay WebSocket keeps retrying transient disconnects and authentication
-timeouts while its session is active. Its exponential delay starts at 250–500ms
-and caps at 15–30s, with jitter on each attempt. A full minute authenticated resets
-that backoff; a brief successful authentication does not. Authentication rejection
+timeouts while its session is active. Its exponential delay starts at 375–625ms
+and caps at 22.5–37.5s (±25% jitter on each attempt). A full minute authenticated
+resets that backoff; a brief successful authentication does not. After a close with
+code 1012 (Service Restart) or 1001 (Going Away), as a rolling deploy sends to every
+client at once, the first attempt instead waits a uniform random time up to 10 s
+(more once repeated bounces have grown the backoff past that) so arrivals spread as
+widely as the closes. Authentication rejection
 or signing failure keeps its error visible and reconnects on a slow timer, 60 s
 doubling to 10 minutes, because access or a locked signer can change later; a
 signer that does not match the viewer stays terminal. A route the relay CLOSED

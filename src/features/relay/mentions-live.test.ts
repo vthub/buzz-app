@@ -171,7 +171,7 @@ it("reconnect AUTH must not reuse previous-generation roster before establishmen
   expect(() =>
     h.session.messages.send("c", "@Agent", [h.agent.pubkey]),
   ).toThrow(/membership/);
-  await vi.advanceTimersByTimeAsync(500);
+  await vi.advanceTimersByTimeAsync(625);
   await h.socket(1).auth();
   // No new stream has reached EOSE and no post-reconnect finite read has run.
   expect(h.session.live.snapshot()).toMatchObject({
@@ -346,7 +346,7 @@ it.each(["disconnect", "clear", "newer-removal"])(
     assert.exists(read);
     if (change === "disconnect") {
       h.socket().close();
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(625);
       await h.socket(1).auth();
     } else if (change === "clear") await h.clearCache();
     else {
@@ -488,7 +488,7 @@ it.each(["reconnect", "clear", "removal"] as const)(
     h.afterPreparation(async () => {
       if (change === "reconnect") {
         h.socket().close();
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 625));
         await h.socket(1).auth();
         expect(h.session.live.snapshot().status).toBe("connected");
       } else if (change === "clear") await h.clearCache();

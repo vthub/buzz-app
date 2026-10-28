@@ -88,6 +88,14 @@ timeline and the thread being read, without reading unopened threads' replies.
   request per sidebar row. A 278-channel roster therefore makes three reads.
   Earlier results publish progressively and survive a later transport failure;
   capacity overflow retains the existing visible error/clear policy and stops repair.
+  A batch whose complete read returned events is read again only from five minutes
+  before the newest of them (never past the present, so a skewed clock or a
+  future-dated event cannot hide history). Retained evidence only grows between
+  resets, so this adds what is newer to what a full read already returned. Cache
+  clears, access changes, capacity overflow and an explicit `refresh()` forget those
+  marks and read every batch in full; a batch that returned nothing is always read
+  in full. Edits and deletions of messages older than the window arrive through live
+  traffic, as they do for the unbounded read.
   Querying every ID does not mean observing every channel: busy channels can still
   consume their batch's sample, and missing thread roots can affect inherited markers.
   Repair evidence does not seed channel windows, alter cursors, or mark messages read.

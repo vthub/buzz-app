@@ -951,3 +951,131 @@ it("observes a channel again when the viewer regains access to it", async () => 
   h.receive([roster(h.relay, "other", [h.viewer.pubkey], 30)]);
   await vi.waitFor(() => expect(h.snapshot().observedCount).toBe(1));
 });
+
+// Repair reads of one batch, in dispatch order. Lookups carry ids or authors.
+const evidenceReads = (h: ReturnType<typeof setup>) =>
+  h.query.mock.calls
+    .map(([filters]) => filters[0])
+    .filter((f) => f?.kinds?.includes(9) && f["#h"] && !f.authors && !f.ids);
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+/** Serves one fixed answer to repair reads and the roster to the reconnect's roster read. */
+function serve(h: ReturnType<typeof setup>, rows: () => readonly RelayEvent[]) {
+  h.query.mockImplementation(async (filters) => {
+    if (filters[0]?.kinds?.includes(39002))
+      return [
+        roster(h.relay, "other", [h.viewer.pubkey], 10),
+        metadata(h.relay, "other", "other", 10),
+      ];
+    return filters[0]?.kinds?.includes(9) ? [...rows()] : [];
+  });
+}
+
+it("a repair after a complete observation reads only near the newest event it returned", async () => {
+  const h = setup();
+  const newest = nowSeconds() - 1000;
+  const row = message(h.peer, "other", "recent", newest);
+  serve(h, () => [row]);
+  await h.session.unread.ensure();
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  const [first, second] = evidenceReads(h);
+  expect(first?.since).toBeUndefined();
+  expect(second).toMatchObject({ since: newest - 300, limit: 500 });
+  expect(second?.["#h"]).toEqual(first?.["#h"]);
+});
+
+it("a batch that returned nothing is read unbounded again", async () => {
+  const h = setup();
+  serve(h, () => []);
+  await h.session.unread.ensure();
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  expect(evidenceReads(h)[1]?.since).toBeUndefined();
+});
+
+it("a future-dated event cannot move the next repair past the present", async () => {
+  const h = setup();
+  const before = nowSeconds();
+  const row = message(h.peer, "other", "skewed", before + 100_000);
+  serve(h, () => [row]);
+  await h.session.unread.ensure();
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  const since = evidenceReads(h)[1]?.since;
+  expect(since).toBeGreaterThanOrEqual(before - 300);
+  expect(since).toBeLessThanOrEqual(nowSeconds() - 300);
+});
+
+it("a repair never reads from before the newest event it already returned", async () => {
+  const h = setup();
+  const newest = nowSeconds() - 1000;
+  let rows = [message(h.peer, "other", "recent", newest)];
+  serve(h, () => rows);
+  await h.session.unread.ensure();
+  // The overlap returns only an older row: the mark must not move back to it.
+  rows = [message(h.peer, "other", "older", newest - 200)];
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(3));
+  expect(evidenceReads(h)[2]?.since).toBe(newest - 300);
+});
+
+it("regaining access reads the batch unbounded, not from the old mark", async () => {
+  const h = setup();
+  const row = message(h.peer, "other", "recent", nowSeconds() - 1000);
+  serve(h, () => [row]);
+  await h.session.unread.ensure();
+  h.receive([roster(h.relay, "other", [], 20)]);
+  h.receive([roster(h.relay, "other", [h.viewer.pubkey], 30)]);
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  expect(evidenceReads(h)[1]?.since).toBeUndefined();
+});
+
+it("an explicit refresh re-observes unbounded", async () => {
+  const h = setup();
+  const row = message(h.peer, "other", "recent", nowSeconds() - 1000);
+  serve(h, () => [row]);
+  await h.session.unread.ensure();
+  await h.session.unread.refresh();
+  expect(evidenceReads(h)).toHaveLength(2);
+  expect(evidenceReads(h)[1]?.since).toBeUndefined();
+});
+
+it("clearing the cache re-observes unbounded", async () => {
+  const h = setup();
+  const row = message(h.peer, "other", "recent", nowSeconds() - 1000);
+  serve(h, () => [row]);
+  await h.session.unread.ensure();
+  await h.clearCache();
+  await h.session.unread.ensure();
+  expect(evidenceReads(h)).toHaveLength(2);
+  expect(evidenceReads(h)[1]?.since).toBeUndefined();
+});
+
+it("capacity overflow discards the mark with the evidence it described", async () => {
+  const h = setup();
+  const recent = nowSeconds() - 1000;
+  const row = message(h.peer, "other", "recent", recent);
+  let rows: readonly RelayEvent[] = [row];
+  serve(h, () => rows);
+  await h.session.unread.ensure();
+  h.receive(
+    Array.from({ length: 18 }, (_, i) =>
+      message(h.peer, "other", "x".repeat(450000), i + 11),
+    ),
+  );
+  rows = [message(h.peer, "other", "x".repeat(450000), recent + 1)];
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  await vi.waitFor(() =>
+    expect(h.snapshot().error).toBe(
+      "Unread observation capacity reached; refresh available",
+    ),
+  );
+  rows = [row];
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(3));
+  expect(evidenceReads(h)[1]?.since).toBe(recent - 300);
+  expect(evidenceReads(h)[2]?.since).toBeUndefined();
+});
