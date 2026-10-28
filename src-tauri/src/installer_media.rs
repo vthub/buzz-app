@@ -642,8 +642,13 @@ mod macos {
     }
 
     /// How long a running copy of the installed bundle gets to quit politely
-    /// before it is force-quit so the move can proceed.
-    const TERMINATE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+    /// before it is force-quit so the move can proceed. The old block/buzz
+    /// Buzz never refuses to quit, but its quit stops its agents first:
+    /// SIGTERM, up to 2 s, then SIGKILL for any still running. Force-quitting
+    /// it inside that window would orphan those agents, still running from
+    /// the Trash, so the cap leaves room for it. The wait ends as soon as the
+    /// app exits, so the cap only costs time while it is still stopping.
+    const TERMINATE_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
     /// Quit every running application whose bundle is `target`, so the copy
     /// about to be trashed doesn't linger with a stale tray icon or write a
