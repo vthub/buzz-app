@@ -19,6 +19,8 @@ export type CopyFormat = "text" | "markdown" | "html";
  * consumers, marked so `copyDocument` drops it and authored pipes stay. */
 export const spoilerDelimiter = '<span data-spoiler-delimiter="">||</span>';
 
+const wrappers = "[data-profile-target], a, [data-spoiler]";
+
 /** Serialize every range of a live selection; ranges join like lines. */
 export function serializeSelection(
   selection: Selection,
@@ -29,11 +31,19 @@ export function serializeSelection(
     const range = selection.getRangeAt(index);
     if (!range.collapsed) {
       const ancestor = range.commonAncestorContainer;
-      // A whole chip can have both endpoints inside its one label text node.
+      // A whole chip can have both endpoints inside its one label text node,
+      // and a word inside a spoiler is still masked content; the outermost
+      // such wrapper keeps a chip inside a spoiler as the spoiler's.
       const element = elementOf(ancestor);
-      const chip = element?.closest("[data-profile-target], a");
+      let wrapper: Element | null = null;
+      for (
+        let outer = element?.closest(wrappers) ?? null;
+        outer;
+        outer = outer.parentElement?.closest(wrappers) ?? null
+      )
+        wrapper = outer;
       // TR/TD/TBODY fragments lose their markup when parsed outside a table.
-      const root = chip ?? element?.closest("table") ?? ancestor;
+      const root = wrapper ?? element?.closest("table") ?? ancestor;
       values.push(serializeNode(root, format, range));
     }
   }
@@ -259,9 +269,11 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
     paragraph.append(...heading.childNodes);
     heading.replaceWith(paragraph);
   }
+  // `***`, not `---`: a paste can land the rule's line directly under the
+  // destination's text, which `---` would turn into a setext heading.
   for (const rule of container.querySelectorAll("hr")) {
     const paragraph = html.createElement("p");
-    paragraph.textContent = "---";
+    paragraph.textContent = "***";
     rule.replaceWith(paragraph);
   }
   for (const input of container.querySelectorAll("input"))
@@ -269,8 +281,7 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
       input.type === "checkbox" ? `[${input.checked ? "x" : " "}]` : "",
     );
   // Rendered paragraphs are separated by blank lines; editor paragraphs are
-  // individual source lines. Preserve that distinction only for timeline HTML,
-  // where it also keeps a `---` paragraph from underlining the one above.
+  // individual source lines. Preserve that distinction only for timeline HTML.
   const origin = node instanceof Element ? node : node.parentElement;
   if (origin?.closest('[data-buzz-copy="timeline"]')) {
     for (const paragraph of container.querySelectorAll("p + p"))

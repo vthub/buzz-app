@@ -614,12 +614,14 @@ export function EditableInput({
      * paragraph joins the caret's line; anything else lands as sibling blocks,
      * splitting the caret's paragraph rather than merging into its text. The
      * caret then ends inside the last pasted block, as ProseMirror leaves it,
-     * so Enter continues a pasted list or quote; that is deliberate. */
+     * so Enter continues a pasted list or quote; that is deliberate. Returns
+     * the range the paste occupies, which can start after the caret's text. */
     const insertDocument = (doc: EditorNode) => {
-      if (!editable() || composing.current || editor.composing) return false;
+      if (!editable() || composing.current || editor.composing) return null;
       const { nodes } = composerSchema;
       const single = doc.childCount === 1 ? doc.firstChild : null;
       const tr = closeHistory(editor.state.tr);
+      let from = tr.selection.from;
       if (single?.type === nodes.paragraph)
         tr.replaceSelection(new Slice(single.content, 0, 0));
       else {
@@ -645,7 +647,7 @@ export function EditableInput({
           // kind has its items join before the item instead, or take a blank
           // item's place; any other block, including a list of the other kind,
           // which keeps its own numbering, follows the item's paragraph.
-          const from = list ? $from.before(-1) : $from.after();
+          from = list ? $from.before(-1) : $from.after();
           const to =
             list && blank && item.childCount === 1 ? $from.after(-1) : from;
           const content = list ? list.content : doc.content;
@@ -666,6 +668,7 @@ export function EditableInput({
           while (blankItem(tr.selection.$from)) {
             if (!apply(tr, liftListItem(nodes.list_item))) break;
           }
+          from = tr.selection.from;
           tr.replaceSelection(new Slice(doc.content, 0, 0));
         }
       }
@@ -673,10 +676,10 @@ export function EditableInput({
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >
         current.current.maxLength
       )
-        return false;
+        return null;
       editor.dispatch(tr.scrollIntoView());
       editor.focus();
-      return true;
+      return { from, to: editor.state.selection.to };
     };
     const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
       if (!editable() || composing.current || editor.composing) return false;
@@ -1663,17 +1666,22 @@ export function EditableInput({
               !paragraph.firstChild?.marks.length
                 ? paragraph.textContent
                 : undefined;
+            if (copy && prose === undefined) {
+              // Only the pasted content is offered: an item-start paste lands
+              // after the item's text, whose display-only links stay so.
+              const inserted = insertDocument(copy);
+              if (inserted) {
+                const after = projection();
+                promoteRecipients(
+                  after.source(inserted.from),
+                  after.source(inserted.to),
+                );
+              }
+              return true;
+            }
             const source = projection(),
               start = source.source(editor.state.selection.from),
               end = source.source(editor.state.selection.to);
-            if (copy && prose === undefined) {
-              if (insertDocument(copy))
-                promoteRecipients(
-                  start,
-                  projection().source(editor.state.selection.to),
-                );
-              return true;
-            }
             let text =
               (!code &&
                 (prose ??

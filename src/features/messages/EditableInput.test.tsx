@@ -2904,10 +2904,16 @@ it.each([
 it.each([
   ["# Title\n\n## Sub", "Title\n\nSub", "p + p + p"],
   ["- [ ] todo\n- [x] done", "[ ] todo\n[x] done", "ul li + li"],
-  ["above\n\n---\n\nbelow", "above\n\n---\n\nbelow", "p + p + p + p + p"],
+  // A rule's source is respelled: see "pastes a copied rule" below.
+  [
+    "above\n\n---\n\nbelow",
+    "above\n\n---\n\nbelow",
+    "p + p + p + p + p",
+    "above\n\n***\n\nbelow",
+  ],
 ])(
   "copies %j, which the composer has no node for, as source that sends the same",
-  (content, plain, shown) => {
+  (content, plain, shown, sent = content) => {
     const view = render(
       <MessageMarkdown
         row={{
@@ -2936,11 +2942,44 @@ it.each([
     expect(copied.text).toBe(plain);
     const target = mount();
     paste(target.input, copied.text, copied.html);
-    expect(target.markdown()).toBe(content);
+    expect(target.markdown()).toBe(sent);
     expect(target.input.querySelector(shown)).not.toBeNull();
     expect(target.input.querySelector("h1, h2, hr, input")).toBeNull();
   },
 );
+
+it("pastes a copied rule after existing text without turning it into a heading", () => {
+  // Copied as `<hr><p>after</p>`, the rule's line lands directly under `foo`,
+  // where `---` would read as a setext underline; `***` cannot.
+  const h = mount("foo");
+  act(() => h.input.setSelectionRange(3, 3));
+  paste(
+    h.input,
+    "---\n\nafter",
+    '<div data-buzz-copy="timeline"><hr><p>after</p></div>',
+  );
+  expect(h.markdown()).toBe("foo\n***\n\nafter");
+  const sent = render(
+    <MessageMarkdown
+      row={{
+        id: "m",
+        channelId: "general",
+        authorId: mic,
+        content: h.markdown(),
+        createdAt: 1,
+        mentions: [],
+        participants: [],
+        attachments: [],
+        reactions: [],
+        replyCount: 0,
+      }}
+      media={() => undefined}
+      onOpenLink={() => false}
+    />,
+  );
+  expect(sent.container.querySelector("p + hr + p")).not.toBeNull();
+  expect(sent.container.querySelector("h1, h2")).toBeNull();
+});
 
 it.each(["-", "3."])(
   "pastes a phrase selected across formatting in a %s list item as prose",
@@ -3388,6 +3427,37 @@ it("promotes identity links inside this app's pasted blocks", () => {
   expect(h.markdown()).toBe("- Ping @Mic");
   expect(h.draft().recipients).toEqual([
     { pubkey: mic, name: "Mic", start: 5, end: 9 },
+  ]);
+});
+
+it("offers only the pasted content for promotion when it lands after an item's text", () => {
+  const accept = vi.fn((pubkey: string) => ({ pubkey, name: "Mic" }));
+  const h = mount(`Ping ${micLink}`, { links: true, acceptRecipient: accept });
+  act(() => h.input.toggleFormat("bullet_list"));
+  expect(h.draft().recipients).toEqual([]);
+  // A quote pasted at the item's start follows its text; the display-only
+  // link in that text is not part of the paste.
+  act(() => h.input.setSelectionRange(0, 0));
+  paste(h.input, "quoted", pastedQuote);
+  expect(h.markdown()).toBe(`- Ping ${micLink}\n  \n  > quoted`);
+  expect(accept).not.toHaveBeenCalled();
+  expect(h.draft().recipients).toEqual([]);
+  // A link inside the pasted quote is offered, wherever the quote lands.
+  act(() => h.input.setSelectionRange(0, 0));
+  paste(
+    h.input,
+    "See @Mic",
+    copyHtml(
+      `<blockquote><p>See <a href="${profileTarget(mic)}">@Mic</a></p></blockquote>`,
+    ),
+  );
+  const markdown = h.markdown();
+  expect(markdown).toBe(`- Ping ${micLink}\n  \n  > See @Mic\n  \n  > quoted`);
+  expect(accept).toHaveBeenCalledTimes(1);
+  // Recipient offsets index the draft's source text, not the wire Markdown.
+  const at = h.draft().text.indexOf("See @Mic") + 4;
+  expect(h.draft().recipients).toEqual([
+    { pubkey: mic, name: "Mic", start: at, end: at + 4 },
   ]);
 });
 

@@ -451,15 +451,37 @@ describe("serializeNode", () => {
       ],
     };
     expect(copyDocument(paragraph).toJSON()).toEqual(parsed);
-    // Part of a spoiler stays a spoiler; a selection ending at its start adds nothing.
+    // Part of a spoiler stays a spoiler, including a word selected wholly
+    // inside its text, whose range never reaches the spoiler element itself;
+    // a selection ending at its start adds nothing.
     const secret = lastText(query("[data-spoiler] span", paragraph));
     const after = paragraph.childNodes[2] as Text;
     expect(
-      serializeNode(paragraph, "text", select(secret, 2, after, 2).range),
+      serializeSelection(select(secret, 2, after, 2).selection, "text"),
     ).toBe("||cret|| b");
+    const inside = select(secret, 2, secret, 4).selection;
+    expect(serializeSelection(inside, "text")).toBe("||cr||");
+    expect(serializeSelection(inside, "markdown")).toBe("||cr||");
+    expect(serializeSelection(inside, "html")).toBe(spoilerHtml("cr"));
     expect(
-      serializeNode(paragraph, "html", select(paragraph, 0, secret, 0).range),
+      serializeSelection(select(paragraph, 0, secret, 0).selection, "html"),
     ).toBe("<p>a </p>");
+    // A chip inside a spoiler copies as the spoiler's, whole label or not.
+    const chip = query(
+      "[data-spoiler] a",
+      mount(
+        row(
+          `<p>${spoiler(true, `ask <a href="${profileTarget("c".repeat(64))}">@Mic</a>`)}</p>`,
+        ),
+      ),
+    );
+    const label = lastText(chip);
+    expect(
+      serializeSelection(select(label, 0, label, 4).selection, "markdown"),
+    ).toBe(`||[@Mic](${profileTarget("c".repeat(64))})||`);
+    expect(
+      serializeSelection(select(label, 1, label, 3).selection, "markdown"),
+    ).toBe("||Mi||");
     // Read back from the clipboard, the delimiters are the mark's, not text,
     // and copying that HTML again does not double them.
     const copied = mount(
@@ -520,7 +542,7 @@ describe("serializeNode", () => {
     expect(each(message)).toEqual({
       text: "Title b\n\n[ ] todo\n[x] done\nplain\n\nabove\n\n---\n\nbelow",
       markdown:
-        "## Title **b**\n\n- [ ] todo\n- [x] done\n- plain\n\nabove\n\n---\n\nbelow",
+        "## Title **b**\n\n- [ ] todo\n- [x] done\n- plain\n\nabove\n\n***\n\nbelow",
       html: '<h2>Title <strong>b</strong></h2><ul><li><input type="checkbox"> todo</li><li><input type="checkbox" checked> done</li><li>plain</li></ul><p>above</p><hr><p>below</p>',
     });
     // Source text joins the paragraphs and items; no new block kinds appear.
@@ -549,19 +571,20 @@ describe("serializeNode", () => {
     expect(partial(query("li", body), 0)).toBe("- [ ] todo\n- [x] done");
   });
 
-  it("separates a rule from the paragraph above so `---` does not underline it", () => {
+  it("spells a copied rule `***`, which no line above can make a heading", () => {
     const body = mount(
       `<div data-buzz-copy="timeline">${row("<p>text</p>\n<hr>")}</div>`,
     );
     const message = query("[data-message-id]", body);
     expect(serializeNode(message, "html")).toBe("<p>text</p><hr>");
-    expect(serializeNode(message, "markdown")).toBe("text\n\n---");
+    expect(serializeNode(message, "text")).toBe("text\n\n---");
+    expect(serializeNode(message, "markdown")).toBe("text\n\n***");
     expect(copyDocument(message).toJSON()).toEqual({
       type: "doc",
       content: [
         { type: "paragraph", content: [{ type: "text", text: "text" }] },
         { type: "paragraph" },
-        { type: "paragraph", content: [{ type: "text", text: "---" }] },
+        { type: "paragraph", content: [{ type: "text", text: "***" }] },
       ],
     });
   });
