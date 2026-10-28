@@ -33,7 +33,10 @@
   },
   "bundle": {
     "active": true,
-    "macOS": { "entitlements": "entitlements.plist" },
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "10.15"
+    },
     "resources": { "resources/bin/": "bin/" },
     "icon": [
       "icons/32x32.png",

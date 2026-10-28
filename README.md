@@ -19,7 +19,8 @@ Get the newest build from the [releases page](https://github.com/block/buzz-app/
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `Buzz_…_aarch64.dmg` | Signed and notarized. Intel Macs aren't supported. |
+| macOS (Apple Silicon) | `Buzz_…_aarch64.dmg` | Signed and notarized. |
+| macOS (Intel) | `Buzz_…_x64.dmg` | Signed and notarized. |
 | Windows (x64) | `Buzz_…_x64_unsigned.exe` | Not code-signed, so Windows SmartScreen warns you before it runs. |
 | Linux (x64) | `Buzz_…_amd64.deb` or `Buzz_…_x86_64.AppImage` | Built on Ubuntu 24.04. |
 
@@ -94,8 +95,8 @@ edit files there.
 ## Preview limitations
 
 - Builds come straight from `main`; there's no stable release channel yet.
-- macOS builds are for Apple Silicon only. The Windows installer is unsigned,
-  and Windows and Linux get less testing than macOS.
+- The Windows installer is unsigned, and Intel macOS, Windows and Linux get
+  less testing than Apple Silicon macOS.
 - Claude and Codex agents need macOS or Linux. Goose and Pi work everywhere.
 - Buzz doesn't back up your key, so keep your own copy (see step 2).
 - Bringing your identity over from Buzz 0.X doesn't bring your communities

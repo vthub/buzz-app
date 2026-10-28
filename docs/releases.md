@@ -4,13 +4,13 @@ The **Desktop previews** workflow builds all supported desktop platforms from
 `main` and publishes one GitHub prerelease, tagged
 `v<app-version>-preview.<run-number>.<attempt>` at the built commit:
 
-- **Apple Silicon macOS:** signed/notarized DMG and a signed updater archive with
-  its `.sig`.
+- **Apple Silicon and Intel macOS:** a signed/notarized DMG and a signed updater
+  archive with its `.sig` for each architecture.
 - **Windows x64:** unsigned NSIS `.exe` installer and its updater `.sig`.
 - **Linux x64:** Ubuntu 24.04 `.deb` and AppImage, each with its updater `.sig`.
-- **Provenance:** `SOURCE_COMMIT` and one `SHA256SUMS` covering all nine asset files.
+- **Provenance:** `SOURCE_COMMIT` and one `SHA256SUMS` covering all twelve asset files.
 
-Publication waits for all three platform jobs, their existing payload checks and
+Publication waits for every platform job, their existing payload checks and
 the Windows/Linux updater signatures. A failed platform blocks publication and
 automatic feed promotion; it does not publish a partial release. Downloads are
 checked against each job's checksums before assembly. If a job fails, use
@@ -24,9 +24,11 @@ Runs are scheduled at **00:17, 06:17, 12:17, and 18:17 UTC**. To start one manua
 gh workflow run release.yml --repo block/buzz-app --ref main
 ```
 
-The macOS build uses `macos-latest` and the repository's pinned toolchain. The
-workflow publishes an Apple-signed/notarized DMG and a separately Tauri-signed
-updater `.app.tar.gz` and `.sig` for Apple Silicon. The updater archive is
+The macOS builds run on Apple Silicon `macos-latest` with the repository's
+pinned toolchain; the Intel build cross-compiles `x86_64-apple-darwin` with the
+same Rust release from rustup, because Hermit's Rust ships only the host's
+standard library. Each publishes an Apple-signed/notarized DMG and a separately
+Tauri-signed updater `.app.tar.gz` and `.sig`. The updater archive is
 rebuilt from the verified app in the signed DMG; built-in Tauri artifact
 creation remains disabled because this DMG-only build does not emit an updater
 archive.
@@ -97,7 +99,7 @@ enable the client flag alone: existing unbound signatures would fail. A signatur
 mismatch fails before the rolling manifest is replaced.
 
 The job builds the Tauri manifest with each artifact's signature from that
-release and an immutable versioned asset URL: `darwin-aarch64`, `windows-x86_64`,
+release and an immutable versioned asset URL: `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`,
 `linux-x86_64-deb` and `linux-x86_64-appimage`. Linux has no generic entry, so
 a deb install never receives an AppImage. The job refuses full-SemVer rollback and
 changed same-version metadata, and replaces the rolling manifest last. The
