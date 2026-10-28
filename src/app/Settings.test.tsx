@@ -1994,7 +1994,15 @@ it("keeps identity independent of community profile and clears revealed keys on 
         {...host}
         cards={cards}
         identity={
-          { exportKey } as unknown as Parameters<typeof Settings>[0]["identity"]
+          {
+            exportKey,
+            // No backup status: the row stays hidden.
+            backup: {
+              subscribe: () => () => {},
+              snapshot: () => undefined,
+              ready: () => new Promise(() => {}),
+            },
+          } as unknown as Parameters<typeof Settings>[0]["identity"]
         }
       />
     </ToastProvider>,

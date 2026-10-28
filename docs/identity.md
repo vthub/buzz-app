@@ -527,6 +527,16 @@ every build without backup configured, the step fails at once as *Key backup
 isn’t available in this version of Buzz.* without saving the choice, and the
 user continues without backup.
 
+**Settings → Identity** shows the uploader's latest status as a read-only **Key
+backup** row, by the same rule: the row appears only when this build's uploader
+can back up to Builderlab and a Builderlab sign-in would be at the build's own
+portal, as the Settings one is. It uses first run's failure wording, except
+that a failure first run's Try again could clear, and a lapsed sign-in, say
+instead that Buzz tries again the next time the user signs in to Builderlab,
+since a new sign-in hands the uploader a session and starts another pass. Idle is what a fresh launch or
+a window reload reports, not evidence that no backup exists. The row has no
+consent or retry control.
+
 When secure storage confirms absence, native recovery commands support explicit
 browser sign-in. The session and recovered keys remain native; the renderer sees
 only validated public identities and attempt-scoped handles. Recovery prefers the
