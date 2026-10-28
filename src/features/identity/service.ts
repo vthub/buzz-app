@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { createBackupStatus } from "./backup";
 
 export type BackupChoice = Readonly<{
   available: boolean;
@@ -29,6 +30,18 @@ export type RecoveryState =
   | ({ status: "choosing" } & RecoveryResult)
   | { status: "error"; error: string };
 
+/** Native recovery's answer when this build or the tenant has no recovery (`nsec_backup.rs` UNAVAILABLE). */
+export const RECOVERY_UNAVAILABLE =
+  "Backup recovery is unavailable. Try again later.";
+/** Native recovery's refusal for this account (`nsec_backup.rs` REFUSED, on a public org). */
+export const RECOVERY_REFUSED =
+  "Backup recovery is not offered for this account.";
+/** A recovery error no retry changes: none here, or the account is refused it. */
+export const recoveryOff = (recovery: RecoveryState | undefined) =>
+  recovery?.status === "error" &&
+  (recovery.error === RECOVERY_UNAVAILABLE ||
+    recovery.error === RECOVERY_REFUSED);
+
 // App-owned, not registered on the plugin context. Snapshots contain public data only.
 export function createIdentity() {
   let state: IdentitySnapshot = { status: "loading" };
@@ -37,6 +50,7 @@ export function createIdentity() {
   let recoveryGeneration = 0;
   let recoveryAttempt: Promise<{ attempt: string }> | undefined;
   const listeners = new Set<() => void>();
+  const backup = createBackupStatus();
   let resolveReady!: (viewer: string) => void;
   const ready = new Promise<string>((resolve) => {
     resolveReady = resolve;
@@ -224,9 +238,12 @@ export function createIdentity() {
     /** Stops agents and restarts; the key (and data, with wipe) goes on next launch. */
     signOut: (choices: { wipe: boolean; removeAgents: boolean }) =>
       invoke<void>("sign_out", choices),
+    /** The native uploader's status; registers on first read, outside the snapshot. */
+    backup,
     dispose() {
       disposed = true;
       void cancelRecovery();
+      backup.dispose();
       listeners.clear();
     },
   };

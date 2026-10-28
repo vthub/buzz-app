@@ -9,6 +9,8 @@ use std::{
 
 type Result<T> = std::result::Result<T, String>;
 const FAILED: &str = "Could not read or save your identity backup choice.";
+/// Another app copy holds the consent lock; the uploader reports it as `busy`.
+pub(crate) const BUSY: &str = "A backup is in progress. Wait for it to finish and try again.";
 
 #[derive(Serialize)]
 pub(crate) struct BackupChoice {
@@ -17,7 +19,33 @@ pub(crate) struct BackupChoice {
     pub(crate) automatic: Option<bool>,
     // Retain this value through an upload. A successful choice change cannot race it.
     #[serde(skip)]
-    _lease: Option<fs::File>,
+    _lease: Option<Lease>,
+}
+
+/// A held advisory lock, released when dropped.
+pub(crate) struct Lease(fs::File);
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // fork/dup can retain the open-file description after our descriptor
+        // closes. Explicitly release ownership when the operation finishes.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+#[cfg(test)]
+impl Lease {
+    /// The descriptor a child spawned while this is held inherits until it execs.
+    pub(crate) fn inherited(&self) -> fs::File {
+        self.0.try_clone().unwrap()
+    }
+}
+
+pub(crate) fn lease(file: fs::File, exclusive: bool) -> std::io::Result<Lease> {
+    if exclusive {
+        fs2::FileExt::try_lock_exclusive(&file)?;
+    } else {
+        fs2::FileExt::try_lock_shared(&file)?;
+    }
+    Ok(Lease(file))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -60,7 +88,7 @@ fn config() -> Result<Option<Config>> {
     )
 }
 
-fn lock(path: &Path, exclusive: bool) -> Result<fs::File> {
+fn lock(path: &Path, exclusive: bool) -> Result<Lease> {
     fs::create_dir_all(path.parent().ok_or(FAILED)?).map_err(|_| FAILED)?;
     let file = fs::OpenOptions::new()
         .read(true)
@@ -69,13 +97,7 @@ fn lock(path: &Path, exclusive: bool) -> Result<fs::File> {
         .truncate(false)
         .open(path.with_extension("lock"))
         .map_err(|_| FAILED)?;
-    let result = if exclusive {
-        fs2::FileExt::try_lock_exclusive(&file)
-    } else {
-        fs2::FileExt::try_lock_shared(&file)
-    };
-    result.map_err(|_| "A backup is in progress. Wait for it to finish and try again.")?;
-    Ok(file)
+    lease(file, exclusive).map_err(|_| BUSY.into())
 }
 
 /// Only `Some(true)` authorizes backup. Keep the returned value alive until completion.

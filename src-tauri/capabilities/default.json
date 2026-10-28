@@ -25,6 +25,8 @@
     "allow-nsec-backup-available",
     "allow-nsec-backup-session",
     "allow-nsec-backup-retry",
+    "allow-nsec-backup-state",
+    "allow-nsec-backup-watch",
     "allow-nsec-restore-begin",
     "allow-nsec-restore-wait",
     "allow-nsec-restore-install",

@@ -91,7 +91,7 @@ impl Record {
     }
 }
 pub(super) struct LockedRecord {
-    _lock: File,
+    _lock: crate::nsec_backup_choice::Lease,
     root: PathBuf,
     path: PathBuf,
 }
@@ -122,9 +122,8 @@ impl LockedRecord {
             .truncate(false)
             .open(root.join(format!("{name}.lock")))
             .map_err(|_| FAILED)?;
-        fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| FAILED)?;
         Ok(Self {
-            _lock: lock,
+            _lock: crate::nsec_backup_choice::lease(lock, true).map_err(|_| FAILED)?,
             root: root.to_owned(),
             path: root.join(format!("{name}.json")),
         })
@@ -193,4 +192,26 @@ pub(super) fn remember_restored(
         envelope: None,
     };
     slot.write(&record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_released_record_lock_is_free_even_while_a_spawned_child_still_shares_it() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config {
+            service_url: "https://backup.example".into(),
+            namespace: "buzz-test".into(),
+        };
+        let open = || LockedRecord::open(root.path(), &config, "subject", "pubkey");
+        let held = open().unwrap();
+        let child = held._lock.inherited();
+        // Another copy still holding the record is refused at once.
+        assert_eq!(open().err().as_deref(), Some(FAILED));
+        drop(held);
+        assert!(open().is_ok());
+        drop(child);
+    }
 }

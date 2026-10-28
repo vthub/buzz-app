@@ -102,12 +102,22 @@ events retry them, including a coalesced follow-up when an event arrives during 
 active pass. Upload success requires a matching stored receipt. Backup
 failure never replaces or deletes the local identity.
 
+The main WebView can observe the uploader through `identity.backup`, which
+registers on first read and stays out of identity snapshots. Its status says
+whether Builderlab backup can run in this build and whether the latest pass is
+idle, running, complete, waiting for consent, a session or a key binding, or
+failed with a named kind; no service response body reaches the renderer. A login
+handoff or retry resolves to the number of the pass it starts, or to none, so a
+caller can wait for that pass's own outcome. A pass superseded by a key install
+reports nothing; reloading the window mid-pass reports idle.
+
 When secure storage confirms absence, native recovery commands support explicit
 browser sign-in. The session and recovered keys remain native; the renderer sees
 only validated public identities and attempt-scoped handles. Recovery prefers the
 account's current associated identity. A previous identity requires explicit
 selection and does not change the account association. Failed mapping requests,
-unavailable endpoints, failed backups and an empty successful result remain distinct.
+unavailable endpoints, an account refused recovery (outside a private
+organization), failed backups and an empty successful result remain distinct.
 Installation uses the existing create-only secure store; cancel, reload, signout
 or a competing create/import prevents stale installation.
 Remembering recovered completion is best effort; retry-file failure does not block

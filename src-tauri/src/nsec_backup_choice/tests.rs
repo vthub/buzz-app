@@ -123,6 +123,19 @@ async fn choice_changes_serialize_with_admitted_readers_across_copies() {
     );
 }
 
+#[test]
+fn a_released_lease_is_free_even_while_a_spawned_child_still_shares_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("choice.json");
+    let held = lock(&path, true).unwrap();
+    let child = held.inherited();
+    // Another copy still holding its lease is busy at once.
+    assert_eq!(lock(&path, false).err().as_deref(), Some(BUSY));
+    drop(held);
+    assert!(lock(&path, false).is_ok());
+    drop(child);
+}
+
 #[tokio::test]
 async fn failed_storage_does_not_report_saved_consent() {
     let temp = tempfile::tempdir().unwrap();

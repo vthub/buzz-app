@@ -35,6 +35,14 @@ it("exposes explicit backup choices without delaying identity readiness or issui
       choiceError,
     );
     expect(identity.snapshot()).toEqual({ status: "ready", viewer: pubkey });
+    // The backup status registers on first read, not with the identity.
+    expect(identity.backup.snapshot()).toBeUndefined();
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+      "identity_restore",
+      "nsec_backup_choice",
+      "nsec_backup_set_choice",
+      "nsec_backup_set_choice",
+    ]);
   } finally {
     identity.dispose();
   }

@@ -63,6 +63,8 @@ fn main() {
             "nsec_backup_available",
             "nsec_backup_session",
             "nsec_backup_retry",
+            "nsec_backup_state",
+            "nsec_backup_watch",
             "nsec_restore_begin",
             "nsec_restore_wait",
             "nsec_restore_install",

@@ -13,9 +13,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import nsecBackup from "../../../src-tauri/src/nsec_backup.rs?raw";
 import {
   createIdentity,
   nativeIdentityEnabled,
+  RECOVERY_REFUSED,
+  RECOVERY_UNAVAILABLE,
   type RecoveryResult,
 } from "./service";
 import { IdentitySetup } from "./IdentitySetup";
@@ -418,8 +421,6 @@ it.each([
 );
 
 it.each([
-  ["nsec_restore_begin", "Backup recovery is unavailable. Try again later."],
-  ["nsec_restore_wait", "Backup recovery is unavailable. Try again later."],
   ["nsec_restore_wait", "Could not restore your identity. Try again."],
   ["nsec_restore_wait", "Restore was canceled. Try again."],
   ["nsec_restore_install", "Could not restore your identity. Try again."],
@@ -454,6 +455,41 @@ it.each([
     identity.dispose();
   },
 );
+
+it.each([
+  ["nsec_restore_begin", RECOVERY_UNAVAILABLE],
+  ["nsec_restore_wait", RECOVERY_UNAVAILABLE],
+  ["nsec_restore_wait", RECOVERY_REFUSED],
+])(
+  "offers no Try recovery again when %s answers %s, which no retry changes",
+  async (operation, message) => {
+    const { identity } = mountRecovery(recovered, (command) =>
+      command === operation ? Promise.reject(message) : undefined,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Restore from backup" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(
+      screen.queryByRole("button", { name: "Try recovery again" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("button", { name: "Use an existing key" }),
+    ).toBeEnabled();
+    identity.dispose();
+  },
+);
+
+it("matches native recovery's unavailable and refused messages exactly", () => {
+  // `recoveryOff` compares strings across IPC, so a reworded native message
+  // would quietly bring Try recovery again back.
+  expect(nsecBackup).toContain(
+    `const UNAVAILABLE: &str = "${RECOVERY_UNAVAILABLE}";`,
+  );
+  expect(nsecBackup).toContain(`const REFUSED: &str = "${RECOVERY_REFUSED}";`);
+});
 
 it("keeps a failed cancellation visible and blocks key changes until Back succeeds", async () => {
   let cancellations = 0;
