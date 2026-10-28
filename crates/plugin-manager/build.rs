@@ -5,14 +5,24 @@ mod build_env;
 
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 
-fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'static str> {
+/// The configured Builderlab, or empty strings when unconfigured.
+#[derive(Debug, Default, PartialEq)]
+struct Builderlab {
+    /// The exact origin, which host grants and sign-in checks compare.
+    origin: String,
+    /// The whole URL without a trailing slash, which keeps a deployment path
+    /// for routes, as the frontend's `oauthTarget` does.
+    base: String,
+}
+
+fn builderlab(local: &Path, process: Option<String>) -> Result<Builderlab, &'static str> {
     let values = build_env::load(local, &[BUILDERLAB_URL_KEY], |_| process.clone())?;
     let raw = values
         .get(BUILDERLAB_URL_KEY)
         .map(String::as_str)
         .unwrap_or("");
     if raw.is_empty() {
-        return Ok(String::new());
+        return Ok(Builderlab::default());
     }
     let url = url::Url::parse(raw).map_err(|_| "Invalid Builderlab build URL")?;
     if url.scheme() != "https"
@@ -23,7 +33,10 @@ fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'
     {
         return Err("Builderlab build URL must use HTTPS without credentials, query, or fragment");
     }
-    Ok(url.origin().ascii_serialization())
+    Ok(Builderlab {
+        origin: url.origin().ascii_serialization(),
+        base: url.as_str().trim_end_matches('/').into(),
+    })
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -41,14 +54,39 @@ fn main() {
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => panic!("Native build inputs must be UTF-8"),
     };
-    let origin =
-        builderlab_origin(&local, process).expect("Invalid Builderlab build configuration");
+    let Builderlab { origin, base } =
+        builderlab(&local, process).expect("Invalid Builderlab build configuration");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
+    println!("cargo:rustc-env=BUZZ_BUILDERLAB_BASE={base}");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'static str> {
+        builderlab(local, process).map(|builderlab| builderlab.origin)
+    }
+
+    #[test]
+    fn the_base_keeps_a_deployment_path_and_port_without_a_trailing_slash() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        let base = |configured: &str| builderlab(&local, Some(configured.into())).unwrap().base;
+        assert_eq!(
+            base("https://APP.BUILDERLAB.XYZ:443/deployment/"),
+            "https://app.builderlab.xyz/deployment"
+        );
+        assert_eq!(
+            base("https://login.example:8443/path/"),
+            "https://login.example:8443/path"
+        );
+        assert_eq!(
+            base("https://app.builderlab.xyz/"),
+            "https://app.builderlab.xyz"
+        );
+        assert_eq!(base(""), "");
+    }
 
     #[test]
     fn local_url_and_process_overrides_produce_an_exact_origin() {

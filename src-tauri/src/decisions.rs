@@ -132,6 +132,14 @@ pub(crate) struct Endpoints {
     pub(crate) builderlab: Option<String>,
 }
 
+/// The decisions route under the configured Builderlab, which can include a
+/// deployment path; sign-in uses the same base.
+fn builderlab_endpoint(base: &str) -> Option<String> {
+    Some(base)
+        .filter(|base| !base.is_empty())
+        .map(|base| format!("{base}{BUILDERLAB_PATH}"))
+}
+
 pub(crate) struct DecisionsHost {
     endpoints: Endpoints,
     slots: Arc<Semaphore>,
@@ -143,9 +151,7 @@ impl DecisionsHost {
         Self::with(
             Endpoints {
                 typesafe: TYPESAFE.into(),
-                builderlab: Some(buzzodz_plugins::BUILDERLAB_ORIGIN)
-                    .filter(|origin| !origin.is_empty())
-                    .map(|origin| format!("{origin}{BUILDERLAB_PATH}")),
+                builderlab: builderlab_endpoint(buzzodz_plugins::BUILDERLAB_BASE),
             },
             TIMEOUT,
         )

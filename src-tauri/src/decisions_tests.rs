@@ -94,6 +94,19 @@ async fn server(
     });
     (url, seen)
 }
+#[test]
+fn the_builderlab_endpoint_keeps_the_deployment_path_and_port() {
+    assert_eq!(
+        builderlab_endpoint("https://login.example:8443/deployment").as_deref(),
+        Some("https://login.example:8443/deployment/api/goose/v3/builderlab/decisions")
+    );
+    assert_eq!(
+        builderlab_endpoint("https://app.builderlab.xyz").as_deref(),
+        Some("https://app.builderlab.xyz/api/goose/v3/builderlab/decisions")
+    );
+    assert_eq!(builderlab_endpoint(""), None);
+}
+
 fn decisions(url: &str) -> DecisionsHost {
     DecisionsHost::with(
         Endpoints {
