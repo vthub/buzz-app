@@ -2,6 +2,7 @@
 import { createRoot } from "react-dom/client";
 import type { Context } from "../../src/plugins/author";
 import { createPage } from "../../src/bundled/agents/attention/Page";
+import { presentPull } from "../../src/bundled/github/attention";
 import "../../src/shared/styles/globals.css";
 
 const channel = "11111111-1111-4111-8111-111111111111";
@@ -84,6 +85,7 @@ const connection = {
 let saveGate: Promise<void> | undefined;
 const controls = {
   saveStarted: false,
+  opened: undefined as unknown,
   releaseSave: () => {},
   holdSave() {
     controls.saveStarted = false;
@@ -98,8 +100,21 @@ declare global {
   }
 }
 window.attentionFixture = controls;
+const navigation = {
+  open: async (target: unknown) => {
+    controls.opened = target;
+  },
+};
+const presentGitHub = presentPull(navigation);
 const Page = createPage({
   agents: {
+    presentWatch: (
+      watch: Parameters<typeof presentGitHub>[0],
+      title: string,
+    ) =>
+      watch.provider === "attention/github-pr"
+        ? presentGitHub(watch, title)
+        : undefined,
     snapshot: () => snapshot,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -144,7 +159,7 @@ const Page = createPage({
     },
   },
   relay: { snapshot: () => connection, subscribe: () => () => {} },
-  navigation: { open: async () => {} },
+  navigation,
 } as unknown as Context);
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");

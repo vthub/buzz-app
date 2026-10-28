@@ -365,6 +365,7 @@ function setup(
       for (const listener of listeners) listener();
     }),
     attentionProviders: () => [],
+    presentWatch: () => undefined,
     addAttentionSource: vi.fn(),
     storage: localStore(),
     resumeInterrupted: vi.fn(),

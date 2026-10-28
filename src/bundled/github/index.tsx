@@ -37,6 +37,7 @@ import {
   stateIcons,
 } from "./SoloPull";
 import { watchPulls } from "./watcher";
+import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
 import { AuthorSettings } from "./AuthorSettings";
 
@@ -159,7 +160,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   });
   // Agents can watch pull requests where the app runs them.
-  ctx.inject(["agents", "host"], watchPulls);
+  ctx.inject(["agents", "host", "navigation"], (scope) =>
+    watchPulls(scope, presentPull(scope.navigation)),
+  );
   // Whose comments and reviews wake them.
   ctx.inject(["settingsCards"], (scope) => {
     scope.settingsCards.register({

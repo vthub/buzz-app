@@ -61,6 +61,14 @@ test("The watching page fits both themes and sizes and manages existing watches 
   await expect(
     page.getByRole("link", { name: "Open project#42" }),
   ).toHaveAttribute("href", "https://github.com/example/project/pull/42");
+  await page
+    .getByRole("button", { name: "Choose who can wake agents" })
+    .click();
+  expect(await page.evaluate(() => window.attentionFixture.opened)).toEqual({
+    version: 1,
+    kind: "settings",
+    section: "buzz.github/authors",
+  });
 });
 
 // Browser focus after removal, including async writes, cannot be proved by jsdom.

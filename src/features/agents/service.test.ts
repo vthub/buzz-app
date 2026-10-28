@@ -10710,6 +10710,7 @@ it("rejects invalid source discovery metadata", async () => {
     { configExample: [] },
     { configExample: { value: 1n } },
     { configExample: circular },
+    { present: "GitHub PR" },
   ])
     expect(() =>
       plugin.agents.addAttentionSource({
@@ -11303,6 +11304,41 @@ it("registers Buzz-owned command sources with saved provider keys", async () => 
   expect(() => registerAttention({ agents: external.agents })).toThrow(
     /built into Buzz/,
   );
+});
+
+it("presents a watch through its provider, and plainly when that fails", async () => {
+  const { service, plugin } = await setup();
+  const watch = {
+    type: "source" as const,
+    interest_id: "release",
+    enabled: true,
+    provider: "attention/github-pr",
+    config: {},
+  };
+  const present = vi.fn((_watch: unknown, title: string) => ({
+    type: `GitHub PR ${title}`,
+  }));
+  plugin
+    .extend({ pluginOwner: { id: "buzz.github", revision: "bundled" } })
+    .agents.addAttentionSource({
+      id: "github-pr",
+      present,
+      run: async () => {},
+    });
+  expect(service.presentWatch(watch, "Release")).toEqual({
+    type: "GitHub PR Release",
+  });
+  expect(present).toHaveBeenCalledWith(watch, "Release");
+  expect(
+    service.presentWatch({ ...watch, provider: "example/other" }, "Release"),
+  ).toBeUndefined();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  present.mockImplementation(() => {
+    throw new Error("broken");
+  });
+  expect(service.presentWatch(watch, "Release")).toBeUndefined();
+  expect(warn).toHaveBeenCalled();
+  warn.mockRestore();
 });
 
 it.each(["command"])(
