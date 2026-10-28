@@ -399,7 +399,9 @@ selects its recipient; ambiguous names require Tab, Enter or click. While the
 chooser is still waiting on members, names, agents or a directory search, Space
 holds the name as a pending chip (a spinner in place of its `@`) and applies the
 same rule once the evidence arrives, within 8 s, or returns it to prose; sending
-waits for a pending chip. A name already known to continue the query (`Mira
+waits for a pending chip, and when one it waited for returns to prose it keeps
+the draft and says which name matched no one, so the next send sends the text
+knowingly. A name already known to continue the query (`Mira
 Example` for `mira`) is a declined Space, not a pending one, so the next word
 can still complete it; a longer name learned only after the chip was held
 extends the chip over the words typed after it when they spell one of those

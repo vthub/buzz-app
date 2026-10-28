@@ -263,7 +263,10 @@ longer name selects it: `@mira Exam` returned to prose, then `ple ` selects
 `Mira Example`. In a
 DM a pending name that resolves to someone outside the DM returns to prose,
 since the chooser's "Will not be notified" row was never shown. Sending while
-a mention is pending waits for it, through such an extension. A pending
+a mention is pending waits for it, through such an extension; if a mention the
+send waited for returns to prose, the client MUST NOT send in that same action,
+since the user saw the name held and would notify no one: it keeps the draft,
+says which name matched no one, and the next send sends the text. A pending
 mention is never a recipient or a reference (section 8).
 
 ## 6. List stability (desktop behavior; not in the fixtures)

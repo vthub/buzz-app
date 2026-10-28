@@ -10107,7 +10107,7 @@ it("guards automatic recipient changes using the current draft prose", () => {
 });
 
 /** A mention provider the test publishes for, over the real `@` syntax. */
-function mountPendingMention() {
+function mountPendingMention(options: Partial<MessageComposerProps> = {}) {
   const publishes: ComposerCompletionProps["publish"][] = [];
   function Completion({ publish }: ComposerCompletionProps) {
     useLayoutEffect(() => {
@@ -10129,6 +10129,7 @@ function mountPendingMention() {
   const empty: [] = [];
   const none = { snapshot: () => empty, subscribe: () => () => {} };
   const h = mount({
+    ...options,
     extensions: {
       tools: none,
       inline: none,
@@ -10595,7 +10596,7 @@ it("a send while a chip is pending waits through its extension, then asks about 
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
 });
 
-it("returns a chip to prose at the resolver's bound when the longer name it extended into never settles, and lets the send go", async () => {
+it("returns a chip to prose at the resolver's bound when the longer name it extended into never settles, and keeps the draft for a second send", async () => {
   // A scripted provider whose chained resolve does I/O that never answers:
   // the host holds it to the bound the first resolution gets.
   const h = mountPendingMention();
@@ -10626,21 +10627,31 @@ it("returns a chip to prose at the resolver's bound when the longer name it exte
     expect(h.chip("mira Example")).toHaveAttribute("aria-busy", "true");
     expect(h.messages.send).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTime(1));
-    // The chip returned to prose and the waiting send went out with it.
+    // The chip returned to prose; the waiting send keeps the draft and says
+    // which name it is, under the name the chip had when it settled.
     expect(h.chip("mira Example")).toBeNull();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "@mira Example could not be matched to a person or agent. Send again to send it as text.",
+    );
+    expect(h.input()).toHaveValue("@mira Example hi");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  } finally {
+    vi.useRealTimers();
+  }
+  h.submit();
+  await waitFor(() =>
     expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
       "channel",
       "@mira Example hi",
       [],
       [],
-    );
-    expect(h.input()).toHaveValue("");
-  } finally {
-    vi.useRealTimers();
-  }
+    ),
+  );
+  expect(h.input()).toHaveValue("");
 });
 
-it("returns a chip to prose at the bound when a provider's first resolution never settles, and lets the send go", async () => {
+it("returns a chip to prose at the bound when a provider's first resolution never settles, and keeps the draft for a second send", async () => {
   // The contract does not ask a provider to time its resolution; the host
   // holds the first link to the same bound as each longer name.
   const h = mountPendingMention();
@@ -10667,19 +10678,27 @@ it("returns a chip to prose at the bound when a provider's first resolution neve
     expect(h.messages.send).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTime(1));
     // The bound told the provider's in-flight work to stop, the chip returned
-    // to prose, and the waiting send went out with it.
+    // to prose, and the waiting send kept the draft with a notice.
     expect(pendingAtAbort).toBe(true);
     expect(h.chip("mira")).toBeNull();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "@mira could not be matched to a person or agent. Send again to send it as text.",
+    );
+    expect(h.input()).toHaveValue("@mira ");
+  } finally {
+    vi.useRealTimers();
+  }
+  h.submit();
+  await waitFor(() =>
     expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
       "channel",
       "@mira ",
       [],
       [],
-    );
-    expect(h.input()).toHaveValue("");
-  } finally {
-    vi.useRealTimers();
-  }
+    ),
+  );
+  expect(h.input()).toHaveValue("");
 });
 
 it("removing a pending chip before the bound aborts the provider's signal and leaves no bound timer behind", async () => {
@@ -10750,43 +10769,95 @@ it("returns a pending mention to prose when its recipient is not admitted at set
   }
 });
 
-it.each([
-  {
-    case: "the recipient",
-    recipient: first,
-    text: "@Honey ",
-    tagged: [first.pubkey],
-  },
-  { case: "prose", recipient: null, text: "@honey ", tagged: [] },
-])(
-  "sending while a mention is pending waits for it, then sends $case",
-  async ({ recipient, text, tagged }) => {
-    const h = mountPendingMention();
-    h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
-    const outcome = deferred<MentionRecipient | null>();
-    try {
-      h.hold("honey", outcome.promise);
-      h.submit();
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Send message" }),
-        ).toBeDisabled(),
-      );
-      expect(h.messages.send).not.toHaveBeenCalled();
-      await act(async () => outcome.resolve(recipient));
-      await waitFor(() =>
-        expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
-          "channel",
-          text,
-          tagged,
-          [],
-        ),
-      );
-    } finally {
-      outcome.resolve(null);
-    }
-  },
-);
+it("returns a pending mention to prose when its resolution is not a well-formed recipient", async () => {
+  // The resolution is a provider's answer: the same shape check a picked
+  // mention gets, so a name-less object never becomes an `@undefined` chip.
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    h.hold("honey", outcome.promise);
+    await act(async () =>
+      outcome.resolve({
+        pubkey: first.pubkey,
+        name: undefined,
+      } as unknown as MentionRecipient),
+    );
+    expect(h.input()).toHaveValue("@honey ");
+    expect(h.chip("honey")).toBeNull();
+    expect(h.input().querySelector("[data-source]")).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+/** `@honey ` held, Send pressed while it is pending. */
+async function sendWhilePending(options: Partial<MessageComposerProps> = {}) {
+  const h = mountPendingMention(options);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  h.hold("honey", outcome.promise);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled(),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  return { ...h, outcome };
+}
+
+it("sending while a mention is pending waits for it, then sends the recipient", async () => {
+  const h = await sendWhilePending();
+  await act(async () => h.outcome.resolve(first));
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@Honey ",
+      [first.pubkey],
+      [],
+    ),
+  );
+});
+
+it("sending while a mention is pending keeps the draft when it returns to prose, and the next send sends the text", async () => {
+  const h = await sendWhilePending();
+  await act(async () => h.outcome.resolve(null));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "@honey could not be matched to a person or agent. Send again to send it as text.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@honey ");
+  expect(h.chip("honey")).toBeNull();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  h.submit();
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@honey ",
+      [],
+      [],
+    ),
+  );
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("sending while a mention is pending asks for a recipient when it returns to prose and one is required", async () => {
+  const h = await sendWhilePending({ requireMention: true });
+  await act(async () => h.outcome.resolve(null));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "@honey could not be matched to a person or agent. Tag a person or agent to send.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@honey ");
+  // Untagged: Send stays focusable so its tooltip can say why.
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
 
 it("asks about a settled outside agent before sending, like a chosen one", async () => {
   const h = mountPendingMention();

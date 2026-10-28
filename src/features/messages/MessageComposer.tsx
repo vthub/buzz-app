@@ -194,6 +194,20 @@ function errorForRecovery(reason: unknown) {
       ? String(reason)
       : undefined;
 }
+/** What `MentionRecipient` promises, checked where one arrives from a
+ * contribution: a 64-hex pubkey and a non-empty name. */
+function wellFormedRecipient(
+  recipient: unknown,
+): recipient is MentionRecipient {
+  if (typeof recipient !== "object" || recipient === null) return false;
+  const { pubkey, name } = recipient as { pubkey?: unknown; name?: unknown };
+  return (
+    typeof pubkey === "string" &&
+    /^[0-9a-f]{64}$/.test(pubkey) &&
+    typeof name === "string" &&
+    !!name.trim()
+  );
+}
 function subscribeRecovery(
   session: ComposerSession,
   key: string,
@@ -1206,7 +1220,8 @@ function Composer({
       {
         resolve: CompletionPending["resolve"];
         controller?: AbortController | undefined;
-        settled?: Promise<void> | undefined;
+        /** Settles with the typed name when the chip returned to prose. */
+        settled?: Promise<string | undefined> | undefined;
       }
     >(),
   );
@@ -1217,9 +1232,10 @@ function Composer({
   ) {
     const entry = pendingMentions.current.get(id);
     if (!entry || signal.aborted) return;
-    // Exactly what Tab would have inserted: admitted now, within the cap.
+    // Exactly what Tab would have inserted: well formed (the resolution is a
+    // provider's answer), admitted now, within the cap.
     const accepted =
-      recipient &&
+      wellFormedRecipient(recipient) &&
       mentionAdmission(
         session,
         channelId,
@@ -1227,19 +1243,21 @@ function Composer({
         currentRoster.current,
       )(recipient.pubkey) &&
       valueRef.current.recipients.length < 32
-        ? recipient
+        ? { pubkey: recipient.pubkey, name: recipient.name }
         : null;
+    const name = valueRef.current.pending?.find((chip) => chip.id === id)?.name;
     // Held through an IME composition, the outcome is a promise: the chip is
     // still pending until the replay, so the entry stays until it lands.
     return Promise.resolve(
       input.current?.settlePendingMention(id, accepted) ?? false,
-    ).then((applied) => settled(id, accepted, applied));
+    ).then((applied) => settled(id, accepted, applied, name ?? ""));
   }
   function settled(
     id: string,
     accepted: MentionRecipient | null,
     applied: boolean,
-  ) {
+    name: string,
+  ): string | undefined {
     const entry = pendingMentions.current.get(id);
     if (!entry) return;
     if (!applied) {
@@ -1254,8 +1272,11 @@ function Composer({
     if (
       accepted &&
       valueRef.current.recipients.some((p) => p.pubkey === accepted.pubkey)
-    )
+    ) {
       rememberMention(session, channelId, accepted.pubkey);
+      return;
+    }
+    return name;
   }
   function resolvePendingMention(id: string) {
     const entry = pendingMentions.current.get(id);
@@ -1274,12 +1295,13 @@ function Composer({
   /** One resolution per chip, through the longer names it continues into:
    * a chip whose name only longer known names kept from selecting extends
    * over the words typed after it when they complete one, and that name is
-   * resolved under the same signal. Anything else returns it to prose. */
+   * resolved under the same signal. Anything else returns it to prose, and
+   * the promise settles with the typed name it returned. */
   async function resolveChip(
     id: string,
     resolve: CompletionPending["resolve"],
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const outcome = await resolve(signal).catch(() => null);
     if (signal.aborted) return;
     if (!outcome || !("continued" in outcome))
@@ -1376,14 +1398,7 @@ function Composer({
     [],
   );
   function insertMention(recipient: MentionRecipient) {
-    if (
-      !recipient ||
-      typeof recipient.pubkey !== "string" ||
-      !/^[0-9a-f]{64}$/.test(recipient.pubkey) ||
-      typeof recipient.name !== "string" ||
-      !recipient.name.trim()
-    )
-      return false;
+    if (!wellFormedRecipient(recipient)) return false;
     if (!solo || editing.target)
       return insert(`@${recipient.name} `, recipient);
     return keepProseCaret((at) =>
@@ -1807,19 +1822,21 @@ function Composer({
       sendAttempt.current = wait;
       setSending(true);
       setError(undefined);
+      let outcomes: PromiseSettledResult<string | undefined>[] | undefined;
       try {
-        await Promise.race([
-          Promise.allSettled(
-            valueRef.current.pending.map((chip) =>
-              resolvePendingMention(chip.id),
+        outcomes =
+          (await Promise.race([
+            Promise.allSettled(
+              valueRef.current.pending.map((chip) =>
+                resolvePendingMention(chip.id),
+              ),
             ),
-          ),
-          new Promise<void>((resolve) => {
-            wait.signal.addEventListener("abort", () => resolve(), {
-              once: true,
-            });
-          }),
-        ]);
+            new Promise<void>((resolve) => {
+              wait.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            }),
+          ])) || undefined;
       } finally {
         if (sendAttempt.current === wait) {
           sendAttempt.current = null;
@@ -1827,6 +1844,22 @@ function Composer({
         }
       }
       if (wait.signal.aborted || !live.current || !permitted.current) return;
+      // A chip this send waited on that returned to prose would go out as a
+      // name that notifies no one, after the user saw it held. Keep the
+      // draft and say so; sending again sends it as text, since nothing is
+      // pending by then.
+      const prose = (outcomes ?? []).flatMap((outcome) =>
+        outcome.status === "fulfilled" && outcome.value ? [outcome.value] : [],
+      );
+      if (prose.length) {
+        const names = prose.map((name) => `@${name}`).join(", ");
+        setError(
+          needsRecipient && !valueRef.current.recipients.length
+            ? `${names} could not be matched to a person or agent. ${recipientHint}.`
+            : `${names} could not be matched to a person or agent. Send again to send ${prose.length > 1 ? "them" : "it"} as text.`,
+        );
+        return;
+      }
     }
     if (needsRecipient && !valueRef.current.recipients.length) {
       setError(recipientHint);
